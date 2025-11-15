@@ -22,18 +22,34 @@ export default function SignIn() {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
     } catch (e) {
-      setErr(e.message);
+      if (e.code === "auth/popup-closed-by-user") {
+        setErr("Sign-in cancelled. Please try again.");
+      } else if (e.code === "auth/popup-blocked") {
+        setErr("Pop-up blocked. Please allow pop-ups for this site.");
+      } else if (e.code === "auth/cancelled-popup-request") {
+        setErr("Sign-in cancelled. Please try again.");
+      } else {
+        setErr("Unable to sign in with Google. Please try again.");
+      }
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErr("");
+
+    // Validation
+    if (!/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(email)) {
+      setErr("Please enter a valid email address.");
+      return;
+    }
+
+    if (pw.length < 6) {
+      setErr("Password must be at least 6 characters long.");
+      return;
+    }
+
     try {
-      if (!/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(email)) {
-        setErr("Please enter a valid email address.");
-        return;
-      }
       if (isSignUp) {
         const userCred = await createUserWithEmailAndPassword(auth, email, pw);
         await sendEmailVerification(userCred.user);
@@ -46,15 +62,19 @@ export default function SignIn() {
       if (e.code === "auth/user-not-found") {
         setErr("No account found with this email.");
       } else if (e.code === "auth/wrong-password") {
-        setErr("Incorrect password.");
+        setErr("Incorrect password. Please try again.");
       } else if (e.code === "auth/invalid-credential") {
         setErr("Invalid email or password.");
       } else if (e.code === "auth/weak-password") {
         setErr("Password should be at least 6 characters.");
       } else if (e.code === "auth/email-already-in-use") {
         setErr("Email already in use. Try signing in instead.");
+      } else if (e.code === "auth/too-many-requests") {
+        setErr("Too many failed attempts. Please try again later.");
+      } else if (e.code === "auth/network-request-failed") {
+        setErr("Network error. Please check your connection.");
       } else {
-        setErr(e.message);
+        setErr("An error occurred. Please try again.");
       }
     }
   };
@@ -236,7 +256,8 @@ export default function SignIn() {
           }}
           onMouseOver={(e) => {
             e.currentTarget.style.borderColor = "#4285F4";
-            e.currentTarget.style.boxShadow = "0 4px 12px rgba(66, 133, 244, 0.2)";
+            e.currentTarget.style.boxShadow =
+              "0 4px 12px rgba(66, 133, 244, 0.2)";
           }}
           onMouseOut={(e) => {
             e.currentTarget.style.borderColor = "#e2e8f0";
@@ -276,7 +297,9 @@ export default function SignIn() {
           }}
         >
           <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
-          <span style={{ color: "#a0aec0", fontSize: "0.9em", fontWeight: 500 }}>
+          <span
+            style={{ color: "#a0aec0", fontSize: "0.9em", fontWeight: 500 }}
+          >
             OR
           </span>
           <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
@@ -309,6 +332,7 @@ export default function SignIn() {
                 fontSize: "1em",
                 transition: "all 0.2s",
                 outline: "none",
+                boxSizing: "border-box",
               }}
               onChange={(e) => setEmail(e.target.value)}
               onFocus={(e) => {
@@ -339,17 +363,19 @@ export default function SignIn() {
               <input
                 type={showPassword ? "text" : "password"}
                 value={pw}
-                placeholder="••••••••"
+                placeholder="Enter at least 6 characters"
                 required
+                minLength={6}
                 style={{
                   width: "100%",
                   padding: "12px 16px",
-                  paddingRight: 45,
+                  paddingRight: 50,
                   border: "2px solid #e2e8f0",
                   borderRadius: 10,
                   fontSize: "1em",
                   transition: "all 0.2s",
                   outline: "none",
+                  boxSizing: "border-box",
                 }}
                 onChange={(e) => setPw(e.target.value)}
                 onFocus={(e) => {
@@ -373,14 +399,28 @@ export default function SignIn() {
                   background: "none",
                   border: "none",
                   cursor: "pointer",
-                  fontSize: "1.2em",
+                  fontSize: "1.3em",
                   padding: 5,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
                 title={showPassword ? "Hide password" : "Show password"}
               >
-                {showPassword ? "👁️" : "👁️‍🗨️"}
+                {showPassword ? "👁️" : "🔒"}
               </button>
             </div>
+            {isSignUp && (
+              <div
+                style={{
+                  marginTop: 6,
+                  fontSize: "0.85em",
+                  color: "#718096",
+                }}
+              >
+                Must be at least 6 characters
+              </div>
+            )}
           </div>
 
           <button
@@ -446,17 +486,17 @@ export default function SignIn() {
               marginTop: 20,
               padding: "12px 16px",
               background: "#fff5f5",
-              border: "1px solid #fc8181",
+              border: "2px solid #fc8181",
               borderRadius: 10,
               color: "#c53030",
               fontSize: "0.95em",
               display: "flex",
-              alignItems: "center",
+              alignItems: "flex-start",
               gap: 10,
             }}
           >
-            <span style={{ fontSize: "1.2em" }}>⚠️</span>
-            <span>{err}</span>
+            <span style={{ fontSize: "1.2em", flexShrink: 0 }}>⚠️</span>
+            <span style={{ flex: 1 }}>{err}</span>
           </div>
         )}
       </div>
