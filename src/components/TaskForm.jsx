@@ -198,16 +198,20 @@ export default function TaskForm({
         )}
       </div>
 
-          {error && (
-      <div
-        style={{
-          color: "#e53e3e",
-          marginTop: 10,
-          fontSize: "0.9em",
-          fontWeight: 500,
-        }}
-      >
-        {error}
-      </div>
-    )}
+                {error && (
+        <div
+          style={{
+            color: "#e53e3e",
+            marginTop: 10,
+            fontSize: "0.9em",
+            fontWeight: 500,
+          }}
+        >
+          {error}
+        </div>
+      )}
+    </form>
+  );
+}
+
 
