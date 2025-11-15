@@ -306,18 +306,3 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     </div>
   );
 }
-```
-
-## What to Check:
-
-1. **Index Status**: Go to Firebase Console → Firestore → Indexes tab
-   - Your index should show as "Enabled" (green)
-   - If it says "Building", wait 2-5 minutes
-
-2. **Index Configuration Should Be**:
-```
-   Collection: tasks
-   Fields indexed: 
-     - uid (Ascending)
-     - due (Ascending)
-   Status: Enabled
