@@ -14,7 +14,7 @@ export default function TaskList({
     <ul style={{ padding: 0, listStyle: "none" }}>
       {tasks.map((task) => (
         <TaskItem
-          key={task.id}
+          key={task}
           task={task}
           onEdit={onEdit}
           onDelete={onDelete}
@@ -26,3 +26,4 @@ export default function TaskList({
     </ul>
   );
 }
+
