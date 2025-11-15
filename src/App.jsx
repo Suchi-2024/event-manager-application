@@ -22,7 +22,6 @@ function AppInner() {
 
     const calculateScoreAndStreak = async () => {
       try {
-        // Get all completed tasks for the user
         const q = query(
           collection(db, "tasks"),
           where("uid", "==", user.uid),
@@ -36,25 +35,21 @@ function AppInner() {
           id: doc.id,
         }));
 
-        // Calculate total score (1 point per completed task)
         setScore(completedTasks.length);
 
-        // Calculate streak
         let currentStreak = 0;
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        // Group tasks by date
         const tasksByDate = {};
         completedTasks.forEach((task) => {
-          const taskDate = task.due.slice(0, 10); // Get YYYY-MM-DD
+          const taskDate = task.due.slice(0, 10);
           if (!tasksByDate[taskDate]) {
             tasksByDate[taskDate] = [];
           }
           tasksByDate[taskDate].push(task);
         });
 
-        // Check consecutive days backwards from today
         let checkDate = new Date(today);
         while (true) {
           const dateStr = checkDate.toISOString().slice(0, 10);
@@ -62,7 +57,6 @@ function AppInner() {
             currentStreak++;
             checkDate.setDate(checkDate.getDate() - 1);
           } else {
-            // If today has no tasks, don't break the streak yet
             if (dateStr === new Date().toISOString().slice(0, 10)) {
               checkDate.setDate(checkDate.getDate() - 1);
               continue;
@@ -78,16 +72,12 @@ function AppInner() {
     };
 
     calculateScoreAndStreak();
-
-    // Recalculate every minute to keep it updated
     const interval = setInterval(calculateScoreAndStreak, 60000);
     return () => clearInterval(interval);
   }, [user]);
 
-  // Recalculate when tasks change
   const handleTasksChange = () => {
     if (user) {
-      // Trigger recalculation
       const event = new CustomEvent("tasksChanged");
       window.dispatchEvent(event);
     }
@@ -149,20 +139,65 @@ function AppInner() {
   if (!user) return <SignIn />;
 
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto", padding: 20 }}>
-      <h1 style={{ marginBottom: 20, textAlign: "center" }}>
-        🗓️ Event Manager
-      </h1>
-      <UserHeader />
-      <ScoreBar score={score} streak={streak} />
-      <SessionSelector
-        selectedDate={selectedDate}
-        onSelectDate={setSelectedDate}
-      />
-      <SessionTasks
-        sessionDate={selectedDate}
-        onTasksChange={handleTasksChange}
-      />
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        padding: "20px",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 800,
+          margin: "0 auto",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            textAlign: "center",
+            marginBottom: 30,
+            color: "#fff",
+          }}
+        >
+          <h1
+            style={{
+              fontSize: "2.5em",
+              margin: "0 0 10px 0",
+              fontWeight: 700,
+              textShadow: "0 2px 10px rgba(0,0,0,0.2)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 12,
+            }}
+          >
+            <span style={{ fontSize: "1.2em" }}>🗓️</span>
+            Event Manager
+          </h1>
+          <p
+            style={{
+              margin: 0,
+              opacity: 0.9,
+              fontSize: "1.1em",
+              fontWeight: 300,
+            }}
+          >
+            Stay organized, track progress, build habits
+          </p>
+        </div>
+
+        <UserHeader />
+        <ScoreBar score={score} streak={streak} />
+        <SessionSelector
+          selectedDate={selectedDate}
+          onSelectDate={setSelectedDate}
+        />
+        <SessionTasks
+          sessionDate={selectedDate}
+          onTasksChange={handleTasksChange}
+        />
+      </div>
     </div>
   );
 }
