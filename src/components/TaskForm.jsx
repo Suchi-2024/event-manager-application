@@ -4,10 +4,11 @@ import { TASK_STATUSES } from "../constants";
 function getNowISOString() {
   return new Date().toISOString().slice(0, 16);
 }
+
 function calendarDay(dateString) {
-  // Only YYYY-MM-DD part
   return dateString?.split("T")[0] || "";
 }
+
 function isDuplicate(tasks, text, due, ignoreId) {
   if (!text || !due) return false;
   const testText = text.trim().toLowerCase();
@@ -32,7 +33,6 @@ export default function TaskForm({
   const [status, setStatus] = useState(editing ? editing.status : "pending");
   const [error, setError] = useState("");
 
-  // If editing changes (e.g. switching between tasks), update local state
   useEffect(() => {
     setText(editing ? editing.text : "");
     setDue(editing ? editing.due : getNowISOString());
@@ -44,19 +44,34 @@ export default function TaskForm({
     e.preventDefault();
     setError("");
 
-    if (!text.trim()) return setError("Task cannot be empty.");
-    if (isDuplicate(tasks, text, due, editing ? editing.id : undefined))
-      return setError("Duplicate task for this date already exists.");
+    if (!text.trim()) {
+      setError("Task cannot be empty.");
+      return;
+    }
 
-    if (new Date(due) < new Date())
-      return setError("Due date/time must not be in the past.");
+    if (isDuplicate(tasks, text, due, editing ? editing.id : undefined)) {
+      setError("Duplicate task for this date already exists.");
+      return;
+    }
+
+    // FIXED: More lenient time validation - allow tasks for today
+    const dueDate = new Date(due);
+    const now = new Date();
+    
+    // Only check if it's in the past by more than 1 minute (to account for processing time)
+    if (dueDate.getTime() < now.getTime() - 60000) {
+      setError("Due date/time cannot be in the past.");
+      return;
+    }
 
     if (editing) {
       onAdd({ ...editing, text: text.trim(), due, status });
       if (onCancelEdit) onCancelEdit();
     } else {
-      onAdd({ text: text.trim(), due, status, links: [], gratitude: "" });
+      onAdd({ text: text.trim(), due, status });
     }
+
+    // Clear form
     setText("");
     setDue(getNowISOString());
     setStatus("pending");
@@ -66,56 +81,121 @@ export default function TaskForm({
   return (
     <form
       onSubmit={handleSubmit}
-      style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}
+      style={{
+        background: "#f8f9fa",
+        padding: "16px",
+        borderRadius: "12px",
+        marginBottom: 20,
+      }}
     >
-      <input
-        style={{ flex: "2 1 120px", padding: 6 }}
-        type="text"
-        placeholder="Task…"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        required
-        disabled={readOnly || (!!editing && editing.status === "completed")}
-      />
-      <input
-        style={{ flex: "2 1 120px", padding: 6 }}
-        type="datetime-local"
-        value={due}
-        onChange={(e) => setDue(e.target.value)}
-        required
-        disabled={readOnly || (!!editing && editing.status === "completed")}
-        min={getNowISOString()}
-      />
-      <select
-        value={status}
-        onChange={(e) => setStatus(e.target.value)}
-        style={{ flex: "1 1 80px", padding: 6 }}
-        disabled={readOnly || (!!editing && editing.status === "completed")}
-      >
-        {TASK_STATUSES.filter((s) => s !== "completed").map((s) => (
-          <option key={s} value={s}>
-            {s.charAt(0).toUpperCase() + s.slice(1)}
-          </option>
-        ))}
-      </select>
-      <button
-        type="submit"
-        style={{ padding: "7px 16px" }}
-        disabled={readOnly || (!!editing && editing.status === "completed")}
-      >
-        {editing ? "Save" : "Add"}
-      </button>
-      {editing && onCancelEdit && (
-        <button
-          type="button"
-          onClick={onCancelEdit}
-          style={{ padding: "7px 14px" }}
-          disabled={readOnly}
+      <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        <input
+          style={{
+            flex: "2 1 200px",
+            padding: "10px 14px",
+            border: "2px solid #e2e8f0",
+            borderRadius: 8,
+            fontSize: "1em",
+            outline: "none",
+          }}
+          type="text"
+          placeholder="What do you want to do?"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          required
+          disabled={readOnly || (!!editing && editing.status === "completed")}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = "#667eea";
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = "#e2e8f0";
+          }}
+        />
+        <input
+          style={{
+            flex: "1.5 1 150px",
+            padding: "10px 14px",
+            border: "2px solid #e2e8f0",
+            borderRadius: 8,
+            fontSize: "0.95em",
+            outline: "none",
+          }}
+          type="datetime-local"
+          value={due}
+          onChange={(e) => setDue(e.target.value)}
+          required
+          disabled={readOnly || (!!editing && editing.status === "completed")}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = "#667eea";
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = "#e2e8f0";
+          }}
+        />
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          style={{
+            flex: "1 1 100px",
+            padding: "10px 14px",
+            border: "2px solid #e2e8f0",
+            borderRadius: 8,
+            fontSize: "0.95em",
+            outline: "none",
+            cursor: "pointer",
+          }}
+          disabled={readOnly || (!!editing && editing.status === "completed")}
         >
-          Cancel
+          {TASK_STATUSES.filter((s) => s !== "completed").map((s) => (
+            <option key={s} value={s}>
+              {s.charAt(0).toUpperCase() + s.slice(1)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <button
+          type="submit"
+          style={{
+            padding: "10px 24px",
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: "transform 0.2s",
+          }}
+          disabled={readOnly || (!!editing && editing.status === "completed")}
+          onMouseOver={(e) => {
+            e.currentTarget.style.transform = "translateY(-2px)";
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.transform = "translateY(0)";
+          }}
+        >
+          {editing ? "💾 Save" : "➕ Add Task"}
         </button>
-      )}
-      {error && <span style={{ color: "red", width: "100%" }}>{error}</span>}
-    </form>
-  );
-}
+        
+        {editing && onCancelEdit && (
+          <button
+            type="button"
+            onClick={onCancelEdit}
+            style={{
+              padding: "10px 20px",
+              background: "#e2e8f0",
+              color: "#4a5568",
+              border: "none",
+              borderRadius: 8,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+            disabled={readOnly}
+          >
+            ✖️ Cancel
+          </button>
+        )}
+      </div>
+
+      {error &
