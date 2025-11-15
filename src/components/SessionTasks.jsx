@@ -104,14 +104,15 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
   return (
     <div
-      style={{
-        background: "#fcfcff",
-        borderRadius: 8,
-        minHeight: 210,
-        boxShadow: "0 2px 10px #ececff",
-        padding: "14px 16px 24px 16px",
-      }}
-    >
+    style={{
+    background: "#fff",
+    borderRadius: 16,
+    minHeight: 210,
+    boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+    padding: "24px",
+    border: "1px solid rgba(102, 126, 234, 0.1)",
+    }}
+  >>
       <h3
         style={{
           margin: 0,
@@ -162,3 +163,4 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     </div>
   );
 }
+
