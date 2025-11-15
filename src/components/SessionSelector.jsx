@@ -4,7 +4,6 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
   const [showHistory, setShowHistory] = useState(false);
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  // Generate last 30 days
   const getLast30Days = () => {
     const days = [];
     for (let i = 0; i < 30; i++) {
@@ -20,16 +19,30 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
   return (
     <div
       style={{
-        background: "#f6f6fc",
-        borderRadius: "12px",
-        padding: "20px",
-        marginBottom: "24px",
-        boxShadow: "0 2px 10px #ececff",
+        background: "#fff",
+        borderRadius: 16,
+        padding: "24px",
+        marginBottom: 24,
+        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+        border: "1px solid rgba(102, 126, 234, 0.1)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
-        <label style={{ fontWeight: "bold", fontSize: "1.1em" }}>
-          Session Date:
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 15,
+          flexWrap: "wrap",
+        }}
+      >
+        <label
+          style={{
+            fontWeight: 700,
+            fontSize: "1.1em",
+            color: "#2d3748",
+          }}
+        >
+          📅 Session Date:
         </label>
         <input
           type="date"
@@ -37,31 +50,64 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
           max={todayStr}
           style={{
             fontSize: "1em",
-            border: "1px solid #aaa",
-            borderRadius: "6px",
-            padding: "7px 12px",
+            border: "2px solid #e2e8f0",
+            borderRadius: 10,
+            padding: "10px 14px",
             background: "#fff",
+            fontWeight: 500,
+            color: "#2d3748",
+            cursor: "pointer",
+            transition: "all 0.2s",
           }}
           onChange={(e) => onSelectDate(e.target.value)}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = "#667eea";
+            e.currentTarget.style.boxShadow = "0 0 0 3px rgba(102, 126, 234, 0.1)";
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = "#e2e8f0";
+            e.currentTarget.style.boxShadow = "none";
+          }}
         />
         <button
           onClick={() => setShowHistory(!showHistory)}
           style={{
-            padding: "7px 14px",
-            background: "#5338ff",
+            padding: "10px 18px",
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
             color: "#fff",
             border: "none",
-            borderRadius: 6,
+            borderRadius: 10,
             cursor: "pointer",
             fontWeight: 600,
             fontSize: "0.95em",
+            transition: "transform 0.2s, box-shadow 0.2s",
+            boxShadow: "0 4px 12px rgba(102, 126, 234, 0.3)",
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.transform = "translateY(-2px)";
+            e.currentTarget.style.boxShadow =
+              "0 6px 16px rgba(102, 126, 234, 0.4)";
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.transform = "translateY(0)";
+            e.currentTarget.style.boxShadow =
+              "0 4px 12px rgba(102, 126, 234, 0.3)";
           }}
         >
-          📅 {showHistory ? "Hide" : "Show"} History
+          {showHistory ? "📅 Hide History" : "📅 Show History"}
         </button>
         {selectedDate !== todayStr && (
-          <span style={{ color: "#888", fontSize: "0.97em" }}>
-            (Past session - read only)
+          <span
+            style={{
+              color: "#718096",
+              fontSize: "0.95em",
+              fontStyle: "italic",
+              background: "#edf2f7",
+              padding: "6px 12px",
+              borderRadius: 8,
+            }}
+          >
+            📖 Past session - read only
           </span>
         )}
       </div>
@@ -69,24 +115,26 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
       {showHistory && (
         <div
           style={{
-            marginTop: 15,
-            background: "#fff",
-            borderRadius: 8,
-            padding: 15,
-            maxHeight: 250,
+            marginTop: 20,
+            background: "#f7fafc",
+            borderRadius: 12,
+            padding: 16,
+            maxHeight: 300,
             overflowY: "auto",
+            border: "1px solid #e2e8f0",
           }}
         >
           <div
             style={{
-              fontWeight: "bold",
-              marginBottom: 10,
-              color: "#333",
+              fontWeight: 700,
+              marginBottom: 12,
+              color: "#2d3748",
+              fontSize: "1.05em",
             }}
           >
-            Last 30 Days:
+            📆 Last 30 Days
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "grid", gap: 8 }}>
             {last30Days.map((date) => {
               const isSelected = date === selectedDate;
               const isToday = date === todayStr;
@@ -98,15 +146,32 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
                     setShowHistory(false);
                   }}
                   style={{
-                    padding: "8px 12px",
-                    background: isSelected ? "#5338ff" : "#f8f8ff",
-                    color: isSelected ? "#fff" : "#333",
-                    border: isSelected ? "none" : "1px solid #ddd",
-                    borderRadius: 6,
+                    padding: "12px 16px",
+                    background: isSelected
+                      ? "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+                      : "#fff",
+                    color: isSelected ? "#fff" : "#2d3748",
+                    border: isSelected
+                      ? "none"
+                      : "2px solid #e2e8f0",
+                    borderRadius: 10,
                     cursor: "pointer",
                     textAlign: "left",
-                    fontWeight: isSelected ? 600 : 400,
+                    fontWeight: isSelected ? 700 : 500,
                     fontSize: "0.95em",
+                    transition: "all 0.2s",
+                  }}
+                  onMouseOver={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = "#667eea";
+                      e.currentTarget.style.transform = "translateX(4px)";
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = "#e2e8f0";
+                      e.currentTarget.style.transform = "translateX(0)";
+                    }
                   }}
                 >
                   {isToday && "📍 "}
