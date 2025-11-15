@@ -25,7 +25,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   const [taskToComplete, setTaskToComplete] = useState(null);
   const [error, setError] = useState(null);
 
-  // Load tasks for ONLY the selected date & user
+  // 🔥 FIX: Load ALL user's tasks, then filter by date in JS
   useEffect(() => {
     if (!user || !user.emailVerified) {
       setLoading(false);
@@ -36,40 +36,32 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     setLoading(true);
     setError(null);
 
-    const startOfDay = sessionDate + "T00:00";
-    const endOfDay = sessionDate + "T23:59";
-
     const q = query(
       collection(db, "tasks"),
       where("uid", "==", user.uid),
-      where("due", ">=", startOfDay),
-      where("due", "<=", endOfDay),
       orderBy("due", "asc")
     );
 
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const t = snap.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-        setTasks(t);
+        const allTasks = snap.docs.map((doc) => ({
+          ...doc.data(),
+          id: doc.id,
+        }));
+
+        const filtered = allTasks.filter((task) =>
+          task.due?.slice(0, 10) === sessionDate
+        );
+
+        setTasks(filtered);
         setLoading(false);
-        if (onTasksChange) onTasksChange(t);
+
+        if (onTasksChange) onTasksChange(filtered);
       },
       (err) => {
         console.error("Firestore error:", err);
-
-        if (err.code === "failed-precondition") {
-          setError(
-            "Database index is building. Please wait 2-5 minutes and refresh."
-          );
-          console.error(
-            "Index still building. Check Firebase console or click the link in the error above."
-          );
-        } else if (err.code === "permission-denied") {
-          setError("Permission denied. Please verify your email.");
-        } else {
-          setError("Failed to load tasks. Please try again.");
-        }
+        setError("Failed to load tasks. Please try again.");
         setLoading(false);
       }
     );
@@ -77,7 +69,8 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     return unsub;
   }, [sessionDate, user, onTasksChange]);
 
-  // CRUD Actions
+  // ----------- CRUD METHODS ------------ //
+
   async function handleAddOrEdit(task) {
     if (!user?.emailVerified) {
       setError("Email verification required to manage tasks.");
@@ -94,7 +87,6 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       } else {
         await addDoc(collection(db, "tasks"), {
           ...task,
-          due: task.due,
           status: task.status || "pending",
           uid: user.uid,
           createdAt: new Date().toISOString(),
@@ -108,63 +100,39 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   }
 
   async function handleDelete(task) {
-    if (!user?.emailVerified) {
-      setError("Email verification required to delete tasks.");
-      return;
-    }
-
     try {
       await deleteDoc(doc(db, "tasks", task.id));
-      setError(null);
     } catch (err) {
       console.error("Error deleting task:", err);
-      setError("Failed to delete task. Please try again.");
+      setError("Failed to delete task.");
     }
   }
 
   async function markTaskStatus(task, status) {
-    if (!user?.emailVerified) {
-      setError("Email verification required to update tasks.");
-      return;
-    }
-
     try {
       await updateDoc(doc(db, "tasks", task.id), { status });
-      setError(null);
     } catch (err) {
       console.error("Error updating task:", err);
-      setError("Failed to update task. Please try again.");
+      setError("Failed to update task.");
     }
   }
 
   function handleMarkComplete(task) {
-    if (!user?.emailVerified) {
-      setError("Email verification required to complete tasks.");
-      return;
-    }
     setTaskToComplete(task);
     setShowGratitudeModal(true);
   }
 
   async function confirmComplete(gratitude) {
-    if (!user?.emailVerified) {
-      setError("Email verification required to complete tasks.");
-      setShowGratitudeModal(false);
-      setTaskToComplete(null);
-      return;
-    }
-
     if (taskToComplete) {
       try {
         await updateDoc(doc(db, "tasks", taskToComplete.id), {
           status: "completed",
-          gratitude: gratitude,
+          gratitude,
           completedAt: new Date().toISOString(),
         });
-        setError(null);
       } catch (err) {
         console.error("Error completing task:", err);
-        setError("Failed to complete task. Please try again.");
+        setError("Failed to complete task.");
       }
     }
     setShowGratitudeModal(false);
@@ -176,7 +144,9 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     setTaskToComplete(null);
   }
 
+  // UI RENDER
   const todayStr = new Date().toISOString().slice(0, 10);
+  const isToday = sessionDate === todayStr;
 
   if (loading) {
     return (
@@ -184,33 +154,29 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         style={{
           background: "#fff",
           borderRadius: 16,
-          padding: "40px",
+          padding: 40,
           textAlign: "center",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-          border: "1px solid rgba(102, 126, 234, 0.1)",
         }}
       >
         <div
           style={{
             width: 50,
             height: 50,
-            border: "4px solid #f3f4f6",
+            border: "4px solid #eee",
             borderTop: "4px solid #667eea",
             borderRadius: "50%",
             animation: "spin 1s linear infinite",
-            margin: "0 auto 15px",
+            margin: "0 auto 10px",
           }}
         />
-        <div style={{ color: "#718096", fontSize: "1.1em" }}>
-          Loading tasks...
-        </div>
+        Loading...
         <style>
           {`
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-          `}
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `}
         </style>
       </div>
     );
@@ -221,49 +187,38 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       <div
         style={{
           background: "#fff3f3",
-          borderRadius: 16,
           padding: 20,
+          borderRadius: 16,
           border: "2px solid #fc8181",
-          color: "#c53030",
           textAlign: "center",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+          color: "#c53030",
         }}
       >
-        <div style={{ fontSize: "2em", marginBottom: 10 }}>⚠️</div>
-        <div style={{ fontWeight: 600, marginBottom: 8 }}>{error}</div>
-        {error.includes("index") && (
-          <div style={{ fontSize: "0.9em", marginTop: 10, color: "#718096" }}>
-            Check the browser console for the index creation link
-          </div>
-        )}
+        ⚠️ {error}
       </div>
     );
   }
-
-  const isToday = sessionDate === todayStr;
 
   return (
     <div
       style={{
         background: "#fff",
         borderRadius: 16,
+        padding: 24,
         minHeight: 210,
-        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-        padding: "24px",
-        border: "1px solid rgba(102, 126, 234, 0.1)",
       }}
     >
       <h3
         style={{
-          margin: 0,
-          marginBottom: 16,
+          margin: "0 0 16px 0",
           fontWeight: 700,
           fontSize: "1.3em",
           color: "#2d3748",
         }}
       >
-        Tasks for {sessionDate === todayStr ? "Today" : sessionDate}
+        Tasks for {isToday ? "Today" : sessionDate}
       </h3>
+
       {isToday && (
         <TaskForm
           onAdd={handleAddOrEdit}
@@ -272,15 +227,14 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           onCancelEdit={() => setEditing(null)}
         />
       )}
+
       {tasks.length === 0 ? (
         <div
           style={{
-            fontStyle: "italic",
-            color: "#a0aec0",
-            marginTop: 24,
             textAlign: "center",
-            fontSize: "1.05em",
-            padding: "40px 20px",
+            color: "#a0aec0",
+            fontStyle: "italic",
+            padding: 40,
           }}
         >
           📝 No tasks for this day
@@ -290,9 +244,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           tasks={tasks}
           onEdit={isToday ? setEditing : undefined}
           onDelete={isToday ? handleDelete : undefined}
-          onMarkOngoing={
-            isToday ? (t) => markTaskStatus(t, "ongoing") : undefined
-          }
+          onMarkOngoing={isToday ? (t) => markTaskStatus(t, "ongoing") : undefined}
           onMarkComplete={isToday ? handleMarkComplete : undefined}
         />
       )}
