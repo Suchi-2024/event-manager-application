@@ -3,17 +3,14 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCEUYfSsssfvhgSuMSRSoLJNVptcr1J-_A",
-  authDomain: "event-manager-685f6.firebaseapp.com",
-  projectId: "event-manager-685f6",
-  storageBucket: "event-manager-685f6.appspot.com",
-  messagingSenderId: "180815936916",
-  appId: "1:180815936916:web:66d3d2c1e4aab266ad6381",
-  measurementId: "G-JB2ZT8TZ2L",
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID,
 };
-const app = initializeApp(firebaseConfig);
-// You can REMOVE analytics (it's not needed for auth/database):
-// const analytics = getAnalytics(app);
 
+const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
