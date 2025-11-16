@@ -1,50 +1,39 @@
+import { GoogleGenerativeAI } from "@langchain/google-genai";
+
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "Method not allowed" });
-    }
-
     const { tasks } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY;
 
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY missing" });
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ plan: "API KEY missing." });
     }
+
+    const model = new GoogleGenerativeAI({
+      model: "gemini-2.5-flash",
+      apiKey: process.env.GEMINI_API_KEY,
+    });
 
     const prompt = `
-      You are an AI productivity assistant.
-      Create an optimized day plan considering deadlines and priority.
+You are an AI day planning assistant. Create a realistic plan for the user's day.
 
-      Tasks:
-      ${tasks
-        .map(
-          (t) =>
-            `• ${t.text} (priority: ${t.priority}, due: ${t.due}, status: ${t.status})`
-        )
-        .join("\n")}
-    `;
+Here are the tasks:
+${tasks
+  .map(
+    (t) =>
+      `• Task: ${t.text}
+         Priority: ${t.priority}
+         Due: ${t.due}
+         Status: ${t.status}`
+  )
+  .join("\n")}
+`;
 
-    const r = await fetch(
-      "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=" +
-        apiKey,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      }
-    );
+    const response = await model.generateContent(prompt);
+    const output = response?.response?.text() || "No output.";
 
-    const data = await r.json();
-
-    const plan =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "AI could not generate a plan.";
-
-    res.status(200).json({ plan });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "AI planning failed" });
+    res.status(200).json({ plan: output });
+  } catch (e) {
+    console.error("AI ERROR:", e);
+    res.status(500).json({ plan: "AI could not generate a plan." });
   }
 }
