@@ -83,7 +83,9 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         if (onTasksChange) onTasksChange(arr);
         setLoading(false);
       },
-      async () => {
+      async (err) => {
+        console.log("Query failed, falling back to full query...");
+        // Fallback to loading all tasks
         const fullQuery = query(
           collection(db, "tasks"),
           where("uid", "==", user.uid)
@@ -103,42 +105,49 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
     unsubRef.current = unsub;
     return () => unsub();
-  }, [sessionDate, user]);
+  }, [sessionDate, user, onTasksChange, dateRange]);
 
   // -------------------- CRUD --------------------
   async function handleAddOrEdit(task) {
-  if (!user) return;
+    if (!user) return;
 
-  if (editing) {
-    await updateDoc(doc(db, "tasks", task.id), task);
-    setEditing(null);
-} else {
-    const newTask = {
-      text: task.text.trim(),
-      due: task.due,
-      status: task.status || "pending",
-      priority: task.priority || "medium",
-      reminder: task.reminder || "",
-      reminderSent: false,
-      uid: user.uid,
-      createdAt: new Date().toISOString(),
-    };
-    
-    await addDoc(collection(db, "tasks"), newTask);
-    
-    // Extract the date from the task's due date
-    const taskDate = task.due.slice(0, 10);
-    const currentSessionDate = sessionDate;
-    
-    // If task is for a different date, offer to switch
-    if (taskDate !== currentSessionDate) {
-      // Dispatch event to parent to change date
-      window.dispatchEvent(
-        new CustomEvent('switchDate', { detail: taskDate })
-      );
+    if (editing) {
+      await updateDoc(doc(db, "tasks", task.id), task);
+      setEditing(null);
+    } else {
+      const newTask = {
+        text: task.text.trim(),
+        due: task.due,
+        status: task.status || "pending",
+        priority: task.priority || "medium",
+        reminder: task.reminder || "",
+        reminderSent: false,
+        uid: user.uid,
+        createdAt: new Date().toISOString(),
+      };
+      
+      await addDoc(collection(db, "tasks"), newTask);
+      
+      // Extract the date from the task's due date
+      const taskDate = task.due.slice(0, 10);
+      const currentSessionDate = sessionDate;
+      
+      console.log("✅ Task created for:", taskDate);
+      console.log("📅 Current session:", currentSessionDate);
+      
+      // If task is for a different date, automatically switch
+      if (taskDate !== currentSessionDate) {
+        console.log("🔄 Switching to date:", taskDate);
+        
+        // Small delay to ensure task is saved
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent('switchDate', { detail: taskDate })
+          );
+        }, 100);
+      }
     }
   }
-}
 
   async function handleDelete(task) {
     await deleteDoc(doc(db, "tasks", task.id));
@@ -192,14 +201,98 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   // -------------------- UI --------------------
   const today = new Date().toISOString().slice(0, 10);
   const isToday = sessionDate === today;
+  const isFuture = sessionDate > today;
+  const isPast = sessionDate < today;
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 16,
+          padding: "40px 20px",
+          textAlign: "center",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+          border: "1px solid rgba(102, 126, 234, 0.1)",
+        }}
+      >
+        <div
+          style={{
+            width: 50,
+            height: 50,
+            border: "4px solid #f3f4f6",
+            borderTop: "4px solid #667eea",
+            borderRadius: "50%",
+            animation: "spin 1s linear infinite",
+            margin: "0 auto 15px",
+          }}
+        />
+        <div style={{ color: "#718096", fontSize: "1.1em" }}>
+          Loading tasks...
+        </div>
+        <style>
+          {`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}
+        </style>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ background: "#fff", borderRadius: 16, padding: "20px 16px" }}>
-      <h3 style={{ fontWeight: 700, fontSize: "1.3em", marginBottom: 16 }}>
+    <div
+      style={{
+        background: "#fff",
+        borderRadius: 16,
+        padding: "20px 16px",
+        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+        border: "1px solid rgba(102, 126, 234, 0.1)",
+      }}
+    >
+      <h3
+        style={{
+          fontWeight: 700,
+          fontSize: "1.3em",
+          marginBottom: 16,
+          color: "#2d3748",
+        }}
+      >
         Tasks for {isToday ? "Today" : sessionDate}
+        {isFuture && (
+          <span
+            style={{
+              marginLeft: 10,
+              fontSize: "0.7em",
+              color: "#667eea",
+              background: "#eff6ff",
+              padding: "4px 10px",
+              borderRadius: 6,
+            }}
+          >
+            📆 Future
+          </span>
+        )}
+        {isPast && (
+          <span
+            style={{
+              marginLeft: 10,
+              fontSize: "0.7em",
+              color: "#718096",
+              background: "#edf2f7",
+              padding: "4px 10px",
+              borderRadius: 6,
+            }}
+          >
+            📖 Past
+          </span>
+        )}
       </h3>
 
-      {isToday && (
+      {/* Only show form for today and future dates */}
+      {(isToday || isFuture) && (
         <TaskForm
           onAdd={handleAddOrEdit}
           tasks={tasks}
@@ -208,8 +301,8 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         />
       )}
 
-      {/* AI Button */}
-      {tasks.length >= 2 && (
+      {/* AI Button - only for today with 2+ tasks */}
+      {isToday && tasks.length >= 2 && (
         <button
           onClick={generatePlan}
           style={{
@@ -219,6 +312,15 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
             borderRadius: 8,
             fontWeight: 600,
             marginBottom: 20,
+            border: "none",
+            cursor: "pointer",
+            transition: "transform 0.2s",
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.transform = "translateY(-2px)";
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.transform = "translateY(0)";
           }}
         >
           🔮 Generate AI Day Planner
@@ -227,14 +329,21 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
       {/* Task List */}
       {tasks.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 30, color: "#999" }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: 40,
+            color: "#a0aec0",
+            fontStyle: "italic",
+          }}
+        >
           📝 No tasks for this day
         </div>
       ) : (
         <TaskList
           tasks={tasks}
-          onEdit={isToday ? setEditing : undefined}
-          onDelete={isToday ? handleDelete : undefined}
+          onEdit={isToday || isFuture ? setEditing : undefined}
+          onDelete={isToday || isFuture ? handleDelete : undefined}
           onMarkOngoing={isToday ? (t) => markTaskStatus(t, "ongoing") : undefined}
           onMarkComplete={isToday ? handleMarkComplete : undefined}
         />
@@ -260,7 +369,9 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
             whiteSpace: "pre-wrap",
           }}
         >
-          <h3 style={{ fontWeight: 700, marginBottom: 12 }}>🧠 AI Day Planner</h3>
+          <h3 style={{ fontWeight: 700, marginBottom: 12 }}>
+            🧠 AI Day Planner
+          </h3>
 
           <div style={{ fontSize: "0.95em", color: "#2d3748" }}>
             {plannerText}
@@ -274,6 +385,8 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
               color: "white",
               padding: "8px 16px",
               borderRadius: 6,
+              border: "none",
+              cursor: "pointer",
             }}
           >
             Hide Plan
@@ -283,4 +396,3 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     </div>
   );
 }
-
