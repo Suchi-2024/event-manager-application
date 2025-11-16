@@ -33,8 +33,11 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   const [plannerText, setPlannerText] = useState("");
   const [showPlanner, setShowPlanner] = useState(false);
 
+  // Future-jump toast
+  const [futureJumpMessage, setFutureJumpMessage] = useState(null);
+
   // Cache per-date
-  const allTasksCache = useRef(null); // { date: '2025-11-16', tasks: [...] }
+  const allTasksCache = useRef(null); // { date: 'YYYY-MM-DD', tasks: [...] }
   const lastFetch = useRef(0);
   const unsubRef = useRef(null);
 
@@ -47,21 +50,22 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     [sessionDate]
   );
 
-  // robust date comparisons (remove timezone issues)
-  const getDateMidnight = (isoDateStr) => {
-    const d = new Date(isoDateStr);
+  const getDateMidnightFromIso = (iso) => {
+    // iso may be "YYYY-MM-DD" or a full ISO
+    const d = new Date(iso);
     d.setHours(0, 0, 0, 0);
     return d;
   };
 
+  // -------------------- LOAD TASKS --------------------
   useEffect(() => {
     if (!user) {
       setLoading(false);
       return;
     }
 
-    // Use cache only if it is for THIS selected date and recent
     const now = Date.now();
+    // Use cache only if it is for THIS selected date and recent
     if (
       allTasksCache.current &&
       allTasksCache.current.date === sessionDate &&
@@ -75,14 +79,14 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
     setLoading(true);
 
-    // Clean previous listener
+    // Remove previous listener
     if (unsubRef.current) {
-      unsubRef.current();
+      try {
+        unsubRef.current();
+      } catch (e) {}
       unsubRef.current = null;
     }
 
-    // Primary (recommended) query: use range on 'due' and orderBy('due')
-    // Make sure you have an index for uid ASC + due ASC in Firestore console.
     const q = query(
       collection(db, "tasks"),
       where("uid", "==", user.uid),
@@ -111,12 +115,14 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
     unsubRef.current = unsub;
     return () => {
-      if (unsub) unsub();
+      try {
+        unsub();
+      } catch (e) {}
       unsubRef.current = null;
     };
   }, [sessionDate, user, onTasksChange, dateRange]);
 
-  // ---------- CRUD ----------
+  // -------------------- CRUD --------------------
   async function handleAddOrEdit(task) {
     if (!user) return;
 
@@ -124,11 +130,23 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     const text = (task.text || "").trim();
     if (!text) return;
 
-    const taskDate = task.due?.slice(0, 10);
-    if (!taskDate) return alert("Invalid due date");
+    // Validate due
+    const due = task.due;
+    if (!due) return alert("Please select a due date/time.");
+
+    // Prevent adding past date/time
+    const now = new Date();
+    const selected = new Date(due);
+    if (selected < now) {
+      return alert("You cannot add a task in the past. Please choose a future date/time.");
+    }
+
+    // Extract date-only
+    const taskDate = due.slice(0, 10);
+    if (!taskDate) return alert("Invalid due date.");
 
     // Duplicate check (Option A: same text + same day blocked)
-    // Fast client-side check if cache has same date
+    // Client-side (fast) if cache has the day
     if (allTasksCache.current && allTasksCache.current.date === taskDate) {
       const dup = allTasksCache.current.tasks.find(
         (t) => t.text?.trim() === text && t.due?.slice(0, 10) === taskDate
@@ -137,7 +155,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         return alert("Duplicate task for the same day blocked.");
       }
     } else {
-      // Safe server-side check: query for same uid + text, then compare date slices
+      // Server-side safe check
       try {
         const q = query(
           collection(db, "tasks"),
@@ -154,19 +172,22 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         }
       } catch (err) {
         console.error("Duplicate check failed:", err);
-        // allow creation if check failed? better to warn user
-        // we'll proceed (optionally you can block)
+        // allow creation only if you want; we'll proceed but it's logged
       }
     }
 
-    if (editing) {
+    if (task.id) {
       // editing existing
       try {
         await updateDoc(doc(db, "tasks", task.id), {
           ...task,
           text,
+          due,
+          dueDate: due.slice(0, 10),
         });
         setEditing(null);
+        // notify score/streak in case status changed elsewhere
+        window.dispatchEvent(new CustomEvent("tasksChanged"));
       } catch (err) {
         console.error("Update failed:", err);
         alert("Failed to update task.");
@@ -175,26 +196,29 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       // new task
       const newTask = {
         text,
-        due: task.due,
+        due,
         status: task.status || "pending",
         priority: task.priority || "medium",
         reminder: task.reminder || "",
         reminderSent: false,
         uid: user.uid,
         createdAt: new Date().toISOString(),
-        // helpful derived field — optional if you already persist dueDate
-        dueDate: task.due?.slice(0, 10),
+        dueDate: due.slice(0, 10),
       };
 
       try {
         await addDoc(collection(db, "tasks"), newTask);
+        // Notify score/streak recalculation
+        window.dispatchEvent(new CustomEvent("tasksChanged"));
 
-        // if created for other date, dispatch switchDate (small delay to let realtime listener update)
-        const createdDate = newTask.dueDate;
-        if (createdDate && createdDate !== sessionDate) {
+        // If created for other date (future), show toast + auto-switch
+        if (newTask.dueDate !== sessionDate) {
+          setFutureJumpMessage(newTask.dueDate);
+
+          // small delay then switch (optional behavior: we auto-switch so user sees the created task)
           setTimeout(() => {
-            window.dispatchEvent(new CustomEvent("switchDate", { detail: createdDate }));
-          }, 200);
+            window.dispatchEvent(new CustomEvent("switchDate", { detail: newTask.dueDate }));
+          }, 400);
         }
       } catch (err) {
         console.error("Add task failed:", err);
@@ -206,6 +230,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   async function handleDelete(task) {
     try {
       await deleteDoc(doc(db, "tasks", task.id));
+      window.dispatchEvent(new CustomEvent("tasksChanged"));
     } catch (err) {
       console.error("Delete failed:", err);
     }
@@ -214,6 +239,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   async function markTaskStatus(task, status) {
     try {
       await updateDoc(doc(db, "tasks", task.id), { status });
+      window.dispatchEvent(new CustomEvent("tasksChanged"));
     } catch (err) {
       console.error("Mark status failed:", err);
     }
@@ -235,7 +261,6 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         gratitude,
         completedAt: new Date().toISOString(),
       });
-      // emit tasksChanged to update score/streak
       window.dispatchEvent(new CustomEvent("tasksChanged"));
     } catch (err) {
       console.error("Confirm complete failed:", err);
@@ -247,7 +272,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     setTaskToComplete(null);
   }
 
-  // ---------- AI PLANNER (unchanged) ----------
+  // -------------------- AI PLANNER --------------------
   async function generatePlan() {
     setPlannerText("⏳ Generating AI plan...");
     setShowPlanner(true);
@@ -266,10 +291,10 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     }
   }
 
-  // UI: robust isToday/isFuture/isPast
+  // UI helpers: robust isToday/isFuture/isPast
   const todayMid = new Date();
   todayMid.setHours(0, 0, 0, 0);
-  const selectedMid = getDateMidnight(sessionDate);
+  const selectedMid = getDateMidnightFromIso(sessionDate);
 
   const isToday = selectedMid.getTime() === todayMid.getTime();
   const isFuture = selectedMid.getTime() > todayMid.getTime();
@@ -277,27 +302,18 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
   if (loading) {
     return (
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 16,
-          padding: "40px 20px",
-          textAlign: "center",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-          border: "1px solid rgba(102, 126, 234, 0.1)",
-        }}
-      >
-        <div
-          style={{
-            width: 50,
-            height: 50,
-            border: "4px solid #f3f4f6",
-            borderTop: "4px solid #667eea",
-            borderRadius: "50%",
-            animation: "spin 1s linear infinite",
-            margin: "0 auto 15px",
-          }}
-        />
+      <div style={{
+        background: "#fff",
+        borderRadius: 16,
+        padding: "40px 20px",
+        textAlign: "center",
+        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+        border: "1px solid rgba(102, 126, 234, 0.1)",
+      }}>
+        <div style={{
+          width: 50, height: 50, border: "4px solid #f3f4f6", borderTop: "4px solid #667eea",
+          borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 15px"
+        }} />
         <div style={{ color: "#718096", fontSize: "1.1em" }}>Loading tasks...</div>
         <style>{`@keyframes spin {0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}`}</style>
       </div>
@@ -305,51 +321,64 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   }
 
   return (
-    <div
-      style={{
-        background: "#fff",
-        borderRadius: 16,
-        padding: "20px 16px",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-        border: "1px solid rgba(102, 126, 234, 0.1)",
-      }}
-    >
-      <h3 style={{ fontWeight: 700, fontSize: "1.3em", marginBottom: 16, color: "#2d3748" }}>
-        Tasks for {isToday ? "Today" : sessionDate}
-        {isFuture && (
-          <span style={{ marginLeft: 10, fontSize: "0.7em", color: "#667eea", background: "#eff6ff", padding: "4px 10px", borderRadius: 6 }}>
-            📆 Future
-          </span>
-        )}
-        {isPast && (
-          <span style={{ marginLeft: 10, fontSize: "0.7em", color: "#718096", background: "#edf2f7", padding: "4px 10px", borderRadius: 6 }}>
-            📖 Past
-          </span>
-        )}
-      </h3>
-
-      {(isToday || isFuture) && (
-        <TaskForm onAdd={handleAddOrEdit} tasks={tasks} editing={editing} onCancelEdit={() => setEditing(null)} />
+    <div style={{
+      background: "#fff", borderRadius: 16, padding: "20px 16px",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.08)", border: "1px solid rgba(102, 126, 234, 0.1)"
+    }}>
+      {/* Future-jump toast */}
+      {futureJumpMessage && (
+        <div style={{
+          background: "#EBF4FF", border: "1px solid #90CDF4", padding: "12px 16px",
+          borderRadius: 10, marginBottom: 15, display: "flex", justifyContent: "space-between",
+          alignItems: "center", color: "#2C5282", fontWeight: 500
+        }}>
+          Task added for <strong style={{ margin: "0 8px" }}>{futureJumpMessage}</strong>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => {
+              window.dispatchEvent(new CustomEvent("switchDate", { detail: futureJumpMessage }));
+              setFutureJumpMessage(null);
+            }} style={{
+              background: "#2B6CB0", color: "#fff", padding: "6px 12px",
+              borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600
+            }}>
+              Go to Task →
+            </button>
+            <button onClick={() => setFutureJumpMessage(null)} style={{
+              background: "transparent", border: "none", color: "#2C5282", cursor: "pointer"
+            }}>
+              ×
+            </button>
+          </div>
+        </div>
       )}
 
+      <h3 style={{ fontWeight: 700, fontSize: "1.3em", marginBottom: 16, color: "#2d3748" }}>
+        Tasks for {isToday ? "Today" : sessionDate}
+        {isFuture && <span style={{ marginLeft: 10, fontSize: "0.7em", color: "#667eea", background: "#eff6ff", padding: "4px 10px", borderRadius: 6 }}>📆 Future</span>}
+        {isPast && <span style={{ marginLeft: 10, fontSize: "0.7em", color: "#718096", background: "#edf2f7", padding: "4px 10px", borderRadius: 6 }}>📖 Past</span>}
+      </h3>
+
+      {/* Only show form for today and future dates */}
+      {(isToday || isFuture) && (
+        <TaskForm
+          onAdd={handleAddOrEdit}
+          tasks={tasks}
+          editing={editing}
+          onCancelEdit={() => setEditing(null)}
+        />
+      )}
+
+      {/* AI Button - only for today with 2+ tasks */}
       {isToday && tasks.length >= 2 && (
-        <button
-          onClick={generatePlan}
-          style={{
-            background: "#4f46e5",
-            color: "white",
-            padding: "10px 18px",
-            borderRadius: 8,
-            fontWeight: 600,
-            marginBottom: 20,
-            border: "none",
-            cursor: "pointer",
-          }}
-        >
+        <button onClick={generatePlan} style={{
+          background: "#4f46e5", color: "white", padding: "10px 18px", borderRadius: 8,
+          fontWeight: 600, marginBottom: 20, border: "none", cursor: "pointer"
+        }}>
           🔮 Generate AI Day Planner
         </button>
       )}
 
+      {/* Task List */}
       {tasks.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40, color: "#a0aec0", fontStyle: "italic" }}>📝 No tasks for this day</div>
       ) : (
