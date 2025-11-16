@@ -26,18 +26,17 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   const [taskToComplete, setTaskToComplete] = useState(null);
   const [error, setError] = useState(null);
 
-  // Cache all user tasks once
   const allTasksCache = useRef(null);
   const lastFetchTime = useRef(0);
   const unsubscribeRef = useRef(null);
 
-  // Memoize date range for the query
   const dateRange = useMemo(() => {
     const startOfDay = sessionDate + "T00:00";
     const endOfDay = sessionDate + "T23:59";
     return { startOfDay, endOfDay };
   }, [sessionDate]);
 
+  // Load tasks
   useEffect(() => {
     if (!user || !user.emailVerified) {
       setLoading(false);
@@ -46,8 +45,8 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     }
 
     const now = Date.now();
-    
-    // If we have cached data and it's less than 30 seconds old, use cache
+
+    // Use cached tasks if fresh (<30s)
     if (allTasksCache.current && now - lastFetchTime.current < 30000) {
       const filtered = allTasksCache.current.filter(
         (task) => task.due?.slice(0, 10) === sessionDate
@@ -61,14 +60,14 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     setLoading(true);
     setError(null);
 
-    // Clean up previous listener
+    // Clean previous listener
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
     }
 
-    // OPTION 1: Try date range query first (requires composite index)
     const { startOfDay, endOfDay } = dateRange;
-    
+
+    // Primary query (requires index)
     const q = query(
       collection(db, "tasks"),
       where("uid", "==", user.uid),
@@ -81,48 +80,40 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       q,
       (snap) => {
         const t = snap.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-        
         setTasks(t);
-        setLoading(false);
         lastFetchTime.current = Date.now();
-
         if (onTasksChange) onTasksChange(t);
+        setLoading(false);
       },
       async (err) => {
         console.error("Firestore error:", err);
 
-        // If composite index is missing, fall back to loading all tasks
+        // Fallback: load all tasks
         if (err.code === "failed-precondition") {
-          console.warn("Composite index missing, falling back to full query...");
-          
           try {
-            // Load ALL tasks once using getDocs (one-time read)
-            const allTasksQuery = query(
+            const allQuery = query(
               collection(db, "tasks"),
               where("uid", "==", user.uid)
             );
-            
-            const snapshot = await getDocs(allTasksQuery);
+
+            const snapshot = await getDocs(allQuery);
             const allTasks = snapshot.docs.map((doc) => ({
               ...doc.data(),
               id: doc.id,
             }));
 
-            // Cache all tasks
             allTasksCache.current = allTasks;
             lastFetchTime.current = Date.now();
 
-            // Filter by date in JavaScript
             const filtered = allTasks.filter(
               (task) => task.due?.slice(0, 10) === sessionDate
             );
 
             setTasks(filtered);
             setLoading(false);
-
             if (onTasksChange) onTasksChange(filtered);
 
-            // Set up real-time listener for all tasks
+            // Realtime listener
             const realtimeQuery = query(
               collection(db, "tasks"),
               where("uid", "==", user.uid)
@@ -146,16 +137,13 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
             });
 
             unsubscribeRef.current = realtimeUnsub;
-          } catch (fallbackErr) {
-            console.error("Fallback query error:", fallbackErr);
-            setError("Failed to load tasks. Please refresh the page.");
+          } catch (err2) {
+            console.error("Fallback error:", err2);
+            setError("Failed to load tasks.");
             setLoading(false);
           }
-        } else if (err.code === "permission-denied") {
-          setError("Permission denied. Please verify your email.");
-          setLoading(false);
         } else {
-          setError("Failed to load tasks. Please refresh the page.");
+          setError("Failed to load tasks.");
           setLoading(false);
         }
       }
@@ -168,65 +156,64 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     };
   }, [sessionDate, user, onTasksChange, dateRange]);
 
-  // Optimistic CRUD operations
+  // CRUD
   async function handleAddOrEdit(task) {
-  if (!user?.emailVerified) {
-    setError("Email verification required to manage tasks.");
-    return;
-  }
-
-  try {
-    if (editing) {
-      // When editing
-      setTasks((prev) =>
-        prev.map((t) => (t.id === editing.id ? { ...t, ...task } : t))
-      );
-
-      await updateDoc(doc(db, "tasks", task.id), {
-        text: task.text,
-        due: task.due,
-        status: task.status,
-        priority: task.priority || "medium", // Add this
-        reminder: task.reminder || "",
-        uid: user.uid,
-        reminderSent: false,
-      });
-      
-      if (allTasksCache.current) {
-        allTasksCache.current = allTasksCache.current.map((t) =>
-          t.id === task.id ? { ...t, ...task } : t
-        );
-      }
-      
-      setEditing(null);
-    } else {
-      // When creating new task
-      const newTask = {
-        text: task.text.trim(),
-        due: task.due,
-        status: task.status || "pending",
-        priority: task.priority || "medium", // Add this
-        reminder: task.reminder || "",
-        reminderSent: false,
-        uid: user.uid,
-        createdAt: new Date().toISOString(),
-      };
-
-      const docRef = await addDoc(collection(db, "tasks"), newTask);
-      
-      const taskWithId = { ...newTask, id: docRef.id };
-      setTasks((prev) => [...prev, taskWithId]);
-      
-      if (allTasksCache.current) {
-        allTasksCache.current.push(taskWithId);
-      }
+    if (!user?.emailVerified) {
+      setError("Email verification required.");
+      return;
     }
-    setError(null);
-  } catch (err) {
-    console.error("Error saving task:", err);
-    setError("Failed to save task. Please try again.");
+
+    try {
+      if (editing) {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === editing.id ? { ...t, ...task } : t))
+        );
+
+        await updateDoc(doc(db, "tasks", task.id), {
+          text: task.text,
+          due: task.due,
+          status: task.status,
+          priority: task.priority || "medium",
+          reminder: task.reminder || "",
+          reminderSent: false,
+          uid: user.uid,
+        });
+
+        if (allTasksCache.current) {
+          allTasksCache.current = allTasksCache.current.map((t) =>
+            t.id === task.id ? { ...t, ...task } : t
+          );
+        }
+
+        setEditing(null);
+      } else {
+        const newTask = {
+          text: task.text.trim(),
+          due: task.due,
+          status: task.status || "pending",
+          priority: task.priority || "medium",
+          reminder: task.reminder || "",
+          reminderSent: false,
+          uid: user.uid,
+          createdAt: new Date().toISOString(),
+        };
+
+        const docRef = await addDoc(collection(db, "tasks"), newTask);
+        const taskWithId = { ...newTask, id: docRef.id };
+
+        setTasks((prev) => [...prev, taskWithId]);
+
+        if (allTasksCache.current) {
+          allTasksCache.current.push(taskWithId);
+        }
+      }
+
+      setError(null);
+    } catch (err) {
+      console.error("Error saving task:", err);
+      setError("Failed to save task.");
+    }
   }
-}
 
   async function handleDelete(task) {
     if (!user?.emailVerified) {
@@ -236,19 +223,17 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
     try {
       setTasks((prev) => prev.filter((t) => t.id !== task.id));
-      
       await deleteDoc(doc(db, "tasks", task.id));
-      
-      // Update cache
+
       if (allTasksCache.current) {
         allTasksCache.current = allTasksCache.current.filter(
           (t) => t.id !== task.id
         );
       }
-      
+
       setError(null);
     } catch (err) {
-      console.error("Error deleting task:", err);
+      console.error("Error deleting:", err);
       setError("Failed to delete task.");
     }
   }
@@ -265,71 +250,60 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       );
 
       await updateDoc(doc(db, "tasks", task.id), { status });
-      
-      // Update cache
+
       if (allTasksCache.current) {
         allTasksCache.current = allTasksCache.current.map((t) =>
           t.id === task.id ? { ...t, status } : t
         );
       }
-      
-      setError(null);
     } catch (err) {
-      console.error("Error updating task:", err);
+      console.error("Error updating status:", err);
       setError("Failed to update task.");
     }
   }
 
   function handleMarkComplete(task) {
-    if (!user?.emailVerified) {
-      setError("Email verification required.");
-      return;
-    }
     setTaskToComplete(task);
     setShowGratitudeModal(true);
   }
 
+  // FIXED — Close modal BEFORE Firestore update
   async function confirmComplete(gratitude) {
     if (!user?.emailVerified) {
       setError("Email verification required.");
-      setShowGratitudeModal(false);
-      setTaskToComplete(null);
       return;
     }
 
-    if (taskToComplete) {
-      try {
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === taskToComplete.id
-              ? { ...t, status: "completed", gratitude }
-              : t
-          )
-        );
+    const task = taskToComplete;
 
-        await updateDoc(doc(db, "tasks", taskToComplete.id), {
-          status: "completed",
-          gratitude,
-          completedAt: new Date().toISOString(),
-        });
-        
-        // Update cache
-        if (allTasksCache.current) {
-          allTasksCache.current = allTasksCache.current.map((t) =>
-            t.id === taskToComplete.id
-              ? { ...t, status: "completed", gratitude }
-              : t
-          );
-        }
-        
-        setError(null);
-      } catch (err) {
-        console.error("Error completing task:", err);
-        setError("Failed to complete task.");
-      }
-    }
+    // IMPORTANT: Close modal first to stop popup loop
     setShowGratitudeModal(false);
     setTaskToComplete(null);
+
+    try {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: "completed", gratitude } : t
+        )
+      );
+
+      if (allTasksCache.current) {
+        allTasksCache.current = allTasksCache.current.map((t) =>
+          t.id === task.id ? { ...t, status: "completed", gratitude } : t
+        );
+      }
+
+      await updateDoc(doc(db, "tasks", task.id), {
+        status: "completed",
+        gratitude,
+        completedAt: new Date().toISOString(),
+      });
+
+      setError(null);
+    } catch (err) {
+      console.error("Error completing task:", err);
+      setError("Failed to complete task.");
+    }
   }
 
   function cancelComplete() {
@@ -340,100 +314,27 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const isToday = sessionDate === todayStr;
 
-  if (loading) {
-    return (
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 16,
-          padding: "40px 20px",
-          textAlign: "center",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-          border: "1px solid rgba(102, 126, 234, 0.1)",
-        }}
-      >
-        <div
-          style={{
-            width: 50,
-            height: 50,
-            border: "4px solid #f3f4f6",
-            borderTop: "4px solid #667eea",
-            borderRadius: "50%",
-            animation: "spin 1s linear infinite",
-            margin: "0 auto 15px",
-          }}
-        />
-        <div style={{ color: "#718096", fontSize: "1.1em" }}>
-          Loading tasks...
-        </div>
-        <style>
-          {`
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-          `}
-        </style>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div
-        style={{
-          background: "#fff3f3",
-          borderRadius: 16,
-          padding: 20,
-          border: "2px solid #fc8181",
-          color: "#c53030",
-          textAlign: "center",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-        }}
-      >
-        <div style={{ fontSize: "2em", marginBottom: 10 }}>⚠️</div>
-        <div style={{ fontWeight: 600, marginBottom: 8 }}>{error}</div>
-        <button
-          onClick={() => window.location.reload()}
-          style={{
-            marginTop: 10,
-            padding: "8px 16px",
-            background: "#667eea",
-            color: "#fff",
-            border: "none",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontWeight: 600,
-          }}
-        >
-          Refresh Page
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div
       style={{
         background: "#fff",
         borderRadius: 16,
         minHeight: 210,
+        padding: "20px 16px 24px",
         boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-        padding: "20px 16px 24px 16px",
-        border: "1px solid rgba(102, 126, 234, 0.1)",
       }}
     >
       <h3
         style={{
-          margin: 0,
           marginBottom: 16,
           fontWeight: 700,
           fontSize: "1.3em",
           color: "#2d3748",
         }}
       >
-        Tasks for {sessionDate === todayStr ? "Today" : sessionDate}
+        Tasks for {isToday ? "Today" : sessionDate}
       </h3>
+
       {isToday && (
         <TaskForm
           onAdd={handleAddOrEdit}
@@ -442,15 +343,15 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           onCancelEdit={() => setEditing(null)}
         />
       )}
+
       {tasks.length === 0 ? (
         <div
           style={{
-            fontStyle: "italic",
-            color: "#a0aec0",
-            marginTop: 24,
             textAlign: "center",
+            color: "#a0aec0",
             fontSize: "1.05em",
             padding: "40px 20px",
+            fontStyle: "italic",
           }}
         >
           📝 No tasks for this day
@@ -476,4 +377,3 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     </div>
   );
 }
-
