@@ -1,39 +1,39 @@
-import { GoogleGenerativeAI } from "@langchain/google-genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export default async function handler(req, res) {
   try {
     const { tasks } = req.body;
 
     if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ plan: "API KEY missing." });
+      return res.status(500).json({ error: "Missing Gemini API Key" });
     }
 
-    const model = new GoogleGenerativeAI({
-      model: "gemini-2.5-flash",
-      apiKey: process.env.GEMINI_API_KEY,
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash"
     });
 
     const prompt = `
-You are an AI day planning assistant. Create a realistic plan for the user's day.
+      You are an AI Day Planner.
+      Create a well-structured, time-efficient daily plan using the user's tasks.
 
-Here are the tasks:
-${tasks
-  .map(
-    (t) =>
-      `• Task: ${t.text}
-         Priority: ${t.priority}
-         Due: ${t.due}
-         Status: ${t.status}`
-  )
-  .join("\n")}
-`;
+      Format it clearly with headings.
+      Tasks:
+      ${tasks
+        .map(
+          (t) =>
+            `• ${t.text} (priority: ${t.priority}, due: ${t.due}, status: ${t.status})`
+        )
+        .join("\n")}
+    `;
 
-    const response = await model.generateContent(prompt);
-    const output = response?.response?.text() || "No output.";
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
 
-    res.status(200).json({ plan: output });
-  } catch (e) {
-    console.error("AI ERROR:", e);
-    res.status(500).json({ plan: "AI could not generate a plan." });
+    res.status(200).json({ plan: text });
+  } catch (err) {
+    console.error("AI Error:", err);
+    res.status(500).json({ error: "AI could not generate a plan" });
   }
 }
