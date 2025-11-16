@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 export default function GratitudeModal({
   show,
@@ -7,11 +7,14 @@ export default function GratitudeModal({
   taskText,
 }) {
   const [gratitude, setGratitude] = useState("");
+
   useEffect(() => {
-  if (!show) {
-    setGratitude("");
-  }
+    // Reset every time modal opens
+    if (show) setGratitude("");
   }, [show]);
+
+  if (!show) return null;
+
   return (
     <div
       style={{
@@ -41,6 +44,7 @@ export default function GratitudeModal({
           🎉 Please reflect: What are you grateful for after completing{" "}
           <i>{taskText}</i>?
         </div>
+
         <textarea
           style={{
             width: "100%",
@@ -53,10 +57,12 @@ export default function GratitudeModal({
           value={gratitude}
           onChange={(e) => setGratitude(e.target.value)}
         />
+
         <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
           <button onClick={onCancel} style={{ padding: "6px 18px" }}>
             Cancel
           </button>
+
           <button
             style={{
               padding: "6px 18px",
@@ -67,10 +73,7 @@ export default function GratitudeModal({
               borderRadius: 6,
             }}
             disabled={!gratitude.trim()}
-            onClick={() => {
-              onConfirm(gratitude.trim());
-              setGratitude("");
-            }}
+            onClick={() => onConfirm(gratitude.trim())}
           >
             Confirm
           </button>
@@ -79,4 +82,3 @@ export default function GratitudeModal({
     </div>
   );
 }
-
