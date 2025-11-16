@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { db } from "../firebase";
 import {
   collection,
@@ -25,7 +25,11 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   const [taskToComplete, setTaskToComplete] = useState(null);
   const [error, setError] = useState(null);
 
-  // 🔥 FIX: Load ALL user's tasks, then filter by date in JS
+  // Cache and refs for optimization
+  const cache = useRef({});
+  const unsubscribeRef = useRef(null);
+  const lastSessionDateRef = useRef(sessionDate);
+
   useEffect(() => {
     if (!user || !user.emailVerified) {
       setLoading(false);
@@ -33,9 +37,27 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       return;
     }
 
+    // Check if we already have cached data for this session
+    const cacheKey = `${user.uid}-${sessionDate}`;
+    if (
+      cache.current[cacheKey] &&
+      lastSessionDateRef.current === sessionDate
+    ) {
+      setTasks(cache.current[cacheKey]);
+      setLoading(false);
+      return;
+    }
+
+    lastSessionDateRef.current = sessionDate;
     setLoading(true);
     setError(null);
 
+    // Clean up previous listener
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+    }
+
+    // Load ALL user's tasks and filter in JS (avoids composite index)
     const q = query(
       collection(db, "tasks"),
       where("uid", "==", user.uid),
@@ -50,9 +72,13 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           id: doc.id,
         }));
 
-        const filtered = allTasks.filter((task) =>
-          task.due?.slice(0, 10) === sessionDate
+        // Filter by date in JavaScript
+        const filtered = allTasks.filter(
+          (task) => task.due?.slice(0, 10) === sessionDate
         );
+
+        // Update cache
+        cache.current[cacheKey] = filtered;
 
         setTasks(filtered);
         setLoading(false);
@@ -61,16 +87,23 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       },
       (err) => {
         console.error("Firestore error:", err);
-        setError("Failed to load tasks. Please try again.");
+        if (err.code === "permission-denied") {
+          setError("Permission denied. Please verify your email.");
+        } else {
+          setError("Failed to load tasks. Please try again.");
+        }
         setLoading(false);
       }
     );
 
-    return unsub;
+    unsubscribeRef.current = unsub;
+
+    return () => {
+      if (unsub) unsub();
+    };
   }, [sessionDate, user, onTasksChange]);
 
-  // ----------- CRUD METHODS ------------ //
-
+  // Optimistic updates for better UX
   async function handleAddOrEdit(task) {
     if (!user?.emailVerified) {
       setError("Email verification required to manage tasks.");
@@ -79,18 +112,25 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
     try {
       if (editing) {
+        // Optimistic update
+        setTasks((prev) =>
+          prev.map((t) => (t.id === editing.id ? { ...t, ...task } : t))
+        );
+
         await updateDoc(doc(db, "tasks", task.id), {
           ...task,
           uid: user.uid,
         });
         setEditing(null);
       } else {
-        await addDoc(collection(db, "tasks"), {
+        const newTask = {
           ...task,
           status: task.status || "pending",
           uid: user.uid,
           createdAt: new Date().toISOString(),
-        });
+        };
+
+        await addDoc(collection(db, "tasks"), newTask);
       }
       setError(null);
     } catch (err) {
@@ -100,17 +140,39 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   }
 
   async function handleDelete(task) {
+    if (!user?.emailVerified) {
+      setError("Email verification required.");
+      return;
+    }
+
     try {
+      // Optimistic update
+      setTasks((prev) => prev.filter((t) => t.id !== task.id));
+
       await deleteDoc(doc(db, "tasks", task.id));
+      setError(null);
     } catch (err) {
       console.error("Error deleting task:", err);
       setError("Failed to delete task.");
+      // Reload on error
+      setLoading(true);
     }
   }
 
   async function markTaskStatus(task, status) {
+    if (!user?.emailVerified) {
+      setError("Email verification required.");
+      return;
+    }
+
     try {
+      // Optimistic update
+      setTasks((prev) =>
+        prev.map((t) => (t.id === task.id ? { ...t, status } : t))
+      );
+
       await updateDoc(doc(db, "tasks", task.id), { status });
+      setError(null);
     } catch (err) {
       console.error("Error updating task:", err);
       setError("Failed to update task.");
@@ -118,18 +180,39 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   }
 
   function handleMarkComplete(task) {
+    if (!user?.emailVerified) {
+      setError("Email verification required.");
+      return;
+    }
     setTaskToComplete(task);
     setShowGratitudeModal(true);
   }
 
   async function confirmComplete(gratitude) {
+    if (!user?.emailVerified) {
+      setError("Email verification required.");
+      setShowGratitudeModal(false);
+      setTaskToComplete(null);
+      return;
+    }
+
     if (taskToComplete) {
       try {
+        // Optimistic update
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === taskToComplete.id
+              ? { ...t, status: "completed", gratitude }
+              : t
+          )
+        );
+
         await updateDoc(doc(db, "tasks", taskToComplete.id), {
           status: "completed",
           gratitude,
           completedAt: new Date().toISOString(),
         });
+        setError(null);
       } catch (err) {
         console.error("Error completing task:", err);
         setError("Failed to complete task.");
@@ -144,7 +227,6 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     setTaskToComplete(null);
   }
 
-  // UI RENDER
   const todayStr = new Date().toISOString().slice(0, 10);
   const isToday = sessionDate === todayStr;
 
@@ -154,29 +236,33 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         style={{
           background: "#fff",
           borderRadius: 16,
-          padding: 40,
+          padding: "40px 20px",
           textAlign: "center",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+          border: "1px solid rgba(102, 126, 234, 0.1)",
         }}
       >
         <div
           style={{
             width: 50,
             height: 50,
-            border: "4px solid #eee",
+            border: "4px solid #f3f4f6",
             borderTop: "4px solid #667eea",
             borderRadius: "50%",
             animation: "spin 1s linear infinite",
-            margin: "0 auto 10px",
+            margin: "0 auto 15px",
           }}
         />
-        Loading...
+        <div style={{ color: "#718096", fontSize: "1.1em" }}>
+          Loading tasks...
+        </div>
         <style>
           {`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}
         </style>
       </div>
     );
@@ -187,14 +273,34 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       <div
         style={{
           background: "#fff3f3",
-          padding: 20,
           borderRadius: 16,
+          padding: 20,
           border: "2px solid #fc8181",
-          textAlign: "center",
           color: "#c53030",
+          textAlign: "center",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
         }}
       >
-        ⚠️ {error}
+        <div style={{ fontSize: "2em", marginBottom: 10 }}>⚠️</div>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>{error}</div>
+        <button
+          onClick={() => {
+            setError(null);
+            setLoading(true);
+          }}
+          style={{
+            marginTop: 10,
+            padding: "8px 16px",
+            background: "#667eea",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -204,21 +310,23 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       style={{
         background: "#fff",
         borderRadius: 16,
-        padding: 24,
         minHeight: 210,
+        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+        padding: "20px 16px 24px 16px",
+        border: "1px solid rgba(102, 126, 234, 0.1)",
       }}
     >
       <h3
         style={{
-          margin: "0 0 16px 0",
+          margin: 0,
+          marginBottom: 16,
           fontWeight: 700,
           fontSize: "1.3em",
           color: "#2d3748",
         }}
       >
-        Tasks for {isToday ? "Today" : sessionDate}
+        Tasks for {sessionDate === todayStr ? "Today" : sessionDate}
       </h3>
-
       {isToday && (
         <TaskForm
           onAdd={handleAddOrEdit}
@@ -227,14 +335,15 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           onCancelEdit={() => setEditing(null)}
         />
       )}
-
       {tasks.length === 0 ? (
         <div
           style={{
-            textAlign: "center",
-            color: "#a0aec0",
             fontStyle: "italic",
-            padding: 40,
+            color: "#a0aec0",
+            marginTop: 24,
+            textAlign: "center",
+            fontSize: "1.05em",
+            padding: "40px 20px",
           }}
         >
           📝 No tasks for this day
@@ -244,7 +353,9 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           tasks={tasks}
           onEdit={isToday ? setEditing : undefined}
           onDelete={isToday ? handleDelete : undefined}
-          onMarkOngoing={isToday ? (t) => markTaskStatus(t, "ongoing") : undefined}
+          onMarkOngoing={
+            isToday ? (t) => markTaskStatus(t, "ongoing") : undefined
+          }
           onMarkComplete={isToday ? handleMarkComplete : undefined}
         />
       )}
