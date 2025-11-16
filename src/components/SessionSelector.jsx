@@ -4,6 +4,7 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
   const [showHistory, setShowHistory] = useState(false);
   const todayStr = new Date().toISOString().slice(0, 10);
 
+  // Generate last 30 days
   const getLast30Days = () => {
     const days = [];
     for (let i = 0; i < 30; i++) {
@@ -14,15 +15,28 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
     return days;
   };
 
+  // Generate next 30 days for future planning
+  const getNext30Days = () => {
+    const days = [];
+    for (let i = 1; i <= 30; i++) {
+      const date = new Date();
+      date.setDate(date.getDate() + i);
+      days.push(date.toISOString().slice(0, 10));
+    }
+    return days;
+  };
+
   const last30Days = getLast30Days();
+  const next30Days = getNext30Days();
+  const allDates = [...next30Days.reverse(), ...last30Days];
 
   return (
     <div
       style={{
         background: "#fff",
         borderRadius: 16,
-        padding: "24px",
-        marginBottom: 24,
+        padding: "20px 24px",
+        marginBottom: 20,
         boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
         border: "1px solid rgba(102, 126, 234, 0.1)",
       }}
@@ -47,7 +61,7 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
         <input
           type="date"
           value={selectedDate}
-          max={todayStr}
+          // ✅ REMOVED max restriction - now allows any date
           style={{
             fontSize: "1em",
             border: "2px solid #e2e8f0",
@@ -59,7 +73,10 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
             cursor: "pointer",
             transition: "all 0.2s",
           }}
-          onChange={(e) => onSelectDate(e.target.value)}
+          onChange={(e) => {
+            console.log("Date selected:", e.target.value);
+            onSelectDate(e.target.value);
+          }}
           onFocus={(e) => {
             e.currentTarget.style.borderColor = "#667eea";
             e.currentTarget.style.boxShadow = "0 0 0 3px rgba(102, 126, 234, 0.1)";
@@ -94,9 +111,23 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
               "0 4px 12px rgba(102, 126, 234, 0.3)";
           }}
         >
-          {showHistory ? "📅 Hide History" : "📅 Show History"}
+          {showHistory ? "📅 Hide Calendar" : "📅 Show Calendar"}
         </button>
-        {selectedDate !== todayStr && (
+        {selectedDate > todayStr && (
+          <span
+            style={{
+              color: "#667eea",
+              fontSize: "0.95em",
+              fontWeight: 600,
+              background: "#eff6ff",
+              padding: "6px 12px",
+              borderRadius: 8,
+            }}
+          >
+            📆 Future session
+          </span>
+        )}
+        {selectedDate < todayStr && (
           <span
             style={{
               color: "#718096",
@@ -119,11 +150,76 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
             background: "#f7fafc",
             borderRadius: 12,
             padding: 16,
-            maxHeight: 300,
+            maxHeight: 400,
             overflowY: "auto",
             border: "1px solid #e2e8f0",
           }}
         >
+          {/* Quick Jump Buttons */}
+          <div style={{ marginBottom: 20, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              onClick={() => {
+                onSelectDate(todayStr);
+                setShowHistory(false);
+              }}
+              style={{
+                padding: "8px 16px",
+                background: "#667eea",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: "0.9em",
+              }}
+            >
+              📍 Today
+            </button>
+            <button
+              onClick={() => {
+                const tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+                onSelectDate(tomorrowStr);
+                setShowHistory(false);
+              }}
+              style={{
+                padding: "8px 16px",
+                background: "#3b82f6",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: "0.9em",
+              }}
+            >
+              ➡️ Tomorrow
+            </button>
+            <button
+              onClick={() => {
+                const nextWeek = new Date();
+                nextWeek.setDate(nextWeek.getDate() + 7);
+                const nextWeekStr = nextWeek.toISOString().slice(0, 10);
+                onSelectDate(nextWeekStr);
+                setShowHistory(false);
+              }}
+              style={{
+                padding: "8px 16px",
+                background: "#10b981",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: "0.9em",
+              }}
+            >
+              📅 Next Week
+            </button>
+          </div>
+
+          {/* Future Dates Section */}
           <div
             style={{
               fontWeight: 700,
@@ -132,12 +228,14 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
               fontSize: "1.05em",
             }}
           >
-            📆 Last 30 Days
+            🔮 Upcoming Days (Next 30 Days)
           </div>
-          <div style={{ display: "grid", gap: 8 }}>
-            {last30Days.map((date) => {
+          <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
+            {next30Days.map((date) => {
               const isSelected = date === selectedDate;
-              const isToday = date === todayStr;
+              const dateObj = new Date(date);
+              const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+              
               return (
                 <button
                   key={date}
@@ -151,15 +249,16 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
                       ? "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
                       : "#fff",
                     color: isSelected ? "#fff" : "#2d3748",
-                    border: isSelected
-                      ? "none"
-                      : "2px solid #e2e8f0",
+                    border: isSelected ? "none" : "2px solid #e2e8f0",
                     borderRadius: 10,
                     cursor: "pointer",
                     textAlign: "left",
                     fontWeight: isSelected ? 700 : 500,
                     fontSize: "0.95em",
                     transition: "all 0.2s",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
                   }}
                   onMouseOver={(e) => {
                     if (!isSelected) {
@@ -174,9 +273,79 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
                     }
                   }}
                 >
-                  {isToday && "📍 "}
-                  {date}
-                  {isToday && " (Today)"}
+                  <span>{date}</span>
+                  <span style={{ fontSize: "0.85em", opacity: 0.8 }}>
+                    {dayName}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Past Dates Section */}
+          <div
+            style={{
+              fontWeight: 700,
+              marginTop: 20,
+              marginBottom: 12,
+              color: "#2d3748",
+              fontSize: "1.05em",
+            }}
+          >
+            📆 Past Days (Last 30 Days)
+          </div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {last30Days.map((date) => {
+              const isSelected = date === selectedDate;
+              const isToday = date === todayStr;
+              const dateObj = new Date(date);
+              const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+
+              return (
+                <button
+                  key={date}
+                  onClick={() => {
+                    onSelectDate(date);
+                    setShowHistory(false);
+                  }}
+                  style={{
+                    padding: "12px 16px",
+                    background: isSelected
+                      ? "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+                      : "#fff",
+                    color: isSelected ? "#fff" : "#2d3748",
+                    border: isSelected ? "none" : "2px solid #e2e8f0",
+                    borderRadius: 10,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    fontWeight: isSelected ? 700 : 500,
+                    fontSize: "0.95em",
+                    transition: "all 0.2s",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                  onMouseOver={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = "#667eea";
+                      e.currentTarget.style.transform = "translateX(4px)";
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = "#e2e8f0";
+                      e.currentTarget.style.transform = "translateX(0)";
+                    }
+                  }}
+                >
+                  <span>
+                    {isToday && "📍 "}
+                    {date}
+                    {isToday && " (Today)"}
+                  </span>
+                  <span style={{ fontSize: "0.85em", opacity: 0.8 }}>
+                    {dayName}
+                  </span>
                 </button>
               );
             })}
