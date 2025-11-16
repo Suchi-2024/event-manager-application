@@ -15,18 +15,24 @@ export default async function handler(req, res) {
     });
 
     const prompt = `
-      You are an AI Day Planner.
-      Create a well-structured, time-efficient daily plan using the user's tasks.
-
-      Format it clearly with headings.
-      Tasks:
-      ${tasks
-        .map(
-          (t) =>
-            `• ${t.text} (priority: ${t.priority}, due: ${t.due}, status: ${t.status})`
-        )
-        .join("\n")}
+    You are an AI day planning assistant. 
+    Generate a clear, simple, structured plan for the user's day.
+    
+    ### Requirements:
+    - DO NOT use markdown headers like "## Afternoon".
+    - Use plain text only.
+    - Keep it concise (3–6 sentences per section).
+    - Break the plan into 3 parts: Morning, Afternoon, Evening.
+    - Sort tasks by priority and due time.
+    - Suggest approximate time blocks.
+    - Use bullet points like: • Task — explanation.
+    
+    User tasks for today:
+    ${tasks.map(t => 
+      `• ${t.text} (priority: ${t.priority}, due: ${t.due}, status: ${t.status})`
+    ).join("\n")}
     `;
+
 
     const result = await model.generateContent(prompt);
     const text = result.response.text();
