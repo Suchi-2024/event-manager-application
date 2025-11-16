@@ -170,55 +170,63 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
   // Optimistic CRUD operations
   async function handleAddOrEdit(task) {
-    if (!user?.emailVerified) {
-      setError("Email verification required to manage tasks.");
-      return;
-    }
-
-    try {
-      if (editing) {
-        setTasks((prev) =>
-          prev.map((t) => (t.id === editing.id ? { ...t, ...task } : t))
-        );
-
-        await updateDoc(doc(db, "tasks", task.id), {
-          ...task,
-          uid: user.uid,
-        });
-        
-        // Update cache
-        if (allTasksCache.current) {
-          allTasksCache.current = allTasksCache.current.map((t) =>
-            t.id === task.id ? { ...t, ...task } : t
-          );
-        }
-        
-        setEditing(null);
-      } else {
-        const newTask = {
-          ...task,
-          status: task.status || "pending",
-          uid: user.uid,
-          createdAt: new Date().toISOString(),
-        };
-
-        const docRef = await addDoc(collection(db, "tasks"), newTask);
-        
-        // Optimistically add to UI
-        const taskWithId = { ...newTask, id: docRef.id };
-        setTasks((prev) => [...prev, taskWithId]);
-        
-        // Update cache
-        if (allTasksCache.current) {
-          allTasksCache.current.push(taskWithId);
-        }
-      }
-      setError(null);
-    } catch (err) {
-      console.error("Error saving task:", err);
-      setError("Failed to save task. Please try again.");
-    }
+  if (!user?.emailVerified) {
+    setError("Email verification required to manage tasks.");
+    return;
   }
+
+  try {
+    if (editing) {
+      // When editing
+      setTasks((prev) =>
+        prev.map((t) => (t.id === editing.id ? { ...t, ...task } : t))
+      );
+
+      await updateDoc(doc(db, "tasks", task.id), {
+        text: task.text,
+        due: task.due,
+        status: task.status,
+        priority: task.priority || "medium", // Add this
+        reminder: task.reminder || "",
+        uid: user.uid,
+        reminderSent: false,
+      });
+      
+      if (allTasksCache.current) {
+        allTasksCache.current = allTasksCache.current.map((t) =>
+          t.id === task.id ? { ...t, ...task } : t
+        );
+      }
+      
+      setEditing(null);
+    } else {
+      // When creating new task
+      const newTask = {
+        text: task.text.trim(),
+        due: task.due,
+        status: task.status || "pending",
+        priority: task.priority || "medium", // Add this
+        reminder: task.reminder || "",
+        reminderSent: false,
+        uid: user.uid,
+        createdAt: new Date().toISOString(),
+      };
+
+      const docRef = await addDoc(collection(db, "tasks"), newTask);
+      
+      const taskWithId = { ...newTask, id: docRef.id };
+      setTasks((prev) => [...prev, taskWithId]);
+      
+      if (allTasksCache.current) {
+        allTasksCache.current.push(taskWithId);
+      }
+    }
+    setError(null);
+  } catch (err) {
+    console.error("Error saving task:", err);
+    setError("Failed to save task. Please try again.");
+  }
+}
 
   async function handleDelete(task) {
     if (!user?.emailVerified) {
@@ -468,3 +476,4 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     </div>
   );
 }
+
