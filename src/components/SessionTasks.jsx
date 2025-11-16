@@ -12,6 +12,7 @@ import {
   deleteDoc,
   getDocs,
 } from "firebase/firestore";
+
 import TaskList from "./TaskList";
 import TaskForm from "./TaskForm";
 import GratitudeModal from "./GratitudeModal";
@@ -19,39 +20,44 @@ import { useAuth } from "./AuthProvider";
 
 export default function SessionTasks({ sessionDate, onTasksChange }) {
   const { user } = useAuth();
+
   const [tasks, setTasks] = useState([]);
   const [editing, setEditing] = useState(null);
   const [loading, setLoading] = useState(true);
+
   const [showGratitudeModal, setShowGratitudeModal] = useState(false);
   const [taskToComplete, setTaskToComplete] = useState(null);
   const [error, setError] = useState(null);
 
-  // ⭐ NEW — AI Planner Popup
+  // ⭐ AI Planner
   const [plannerSuggestions, setPlannerSuggestions] = useState("");
   const [showPlannerModal, setShowPlannerModal] = useState(false);
 
+  // cache
   const allTasksCache = useRef(null);
   const lastFetchTime = useRef(0);
   const unsubscribeRef = useRef(null);
 
   const dateRange = useMemo(() => {
-    const startOfDay = sessionDate + "T00:00";
-    const endOfDay = sessionDate + "T23:59";
-    return { startOfDay, endOfDay };
+    return {
+      startOfDay: sessionDate + "T00:00",
+      endOfDay: sessionDate + "T23:59",
+    };
   }, [sessionDate]);
 
-  // Load tasks…
+  // ------------------ LOAD TASKS ------------------
   useEffect(() => {
-    if (!user || !user.emailVerified) {
+    if (!user) {
       setLoading(false);
-      setError("Email verification required to access tasks.");
       return;
     }
 
     const now = Date.now();
+
+    // quick cache
     if (allTasksCache.current && now - lastFetchTime.current < 30000) {
       const filtered = allTasksCache.current.filter(
-        (task) => task.due?.slice(0, 10) === sessionDate
+        (t) => t.due?.slice(0, 10) === sessionDate
       );
       setTasks(filtered);
       setLoading(false);
@@ -60,40 +66,117 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     }
 
     setLoading(true);
-    if (unsubscribeRef.current) unsubscribeRef.current();
 
-    const { startOfDay, endOfDay } = dateRange;
+    if (unsubscribeRef.current) unsubscribeRef.current();
 
     const q = query(
       collection(db, "tasks"),
       where("uid", "==", user.uid),
-      where("due", ">=", startOfDay),
-      where("due", "<=", endOfDay),
+      where("due", ">=", dateRange.startOfDay),
+      where("due", "<=", dateRange.endOfDay),
       orderBy("due", "asc")
     );
 
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const t = snap.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-        setTasks(t);
+        const list = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+        setTasks(list);
         lastFetchTime.current = Date.now();
-        if (onTasksChange) onTasksChange(t);
+        allTasksCache.current = list;
+        if (onTasksChange) onTasksChange(list);
         setLoading(false);
       },
-      async () => {
-        // fallback omitted for brevity
+      async (err) => {
+        console.warn("⚠️ Index issue — fallback loading");
+        // fallback: load all user's tasks
+        const allQuery = query(collection(db, "tasks"), where("uid", "==", user.uid));
+        const docs = await getDocs(allQuery);
+        const all = docs.docs.map((d) => ({ ...d.data(), id: d.id }));
+        allTasksCache.current = all;
+
+        const filtered = all.filter((t) => t.due?.slice(0, 10) === sessionDate);
+        setTasks(filtered);
+        if (onTasksChange) onTasksChange(filtered);
+        setLoading(false);
       }
     );
 
     unsubscribeRef.current = unsub;
     return () => unsub();
-  }, [sessionDate, user, onTasksChange, dateRange]);
+  }, [sessionDate, user]);
 
-  // CRUD (unchanged)…
+  // ------------------ CRUD ------------------
+  async function handleAddOrEdit(task) {
+    if (!user) return;
 
+    try {
+      if (editing) {
+        await updateDoc(doc(db, "tasks", task.id), task);
+        setEditing(null);
+      } else {
+        const newTask = {
+          text: task.text.trim(),
+          due: task.due,
+          status: task.status || "pending",
+          priority: task.priority || "medium",
+          reminder: task.reminder || "",
+          reminderSent: false,
+          uid: user.uid,
+          createdAt: new Date().toISOString(),
+        };
+        const ref = await addDoc(collection(db, "tasks"), newTask);
+        setTasks((p) => [...p, { ...newTask, id: ref.id }]);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
-  // ⭐ NEW — AI Planner Function
+  async function handleDelete(task) {
+    try {
+      await deleteDoc(doc(db, "tasks", task.id));
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function markTaskStatus(task, status) {
+    try {
+      await updateDoc(doc(db, "tasks", task.id), { status });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function handleMarkComplete(task) {
+    setTaskToComplete(task);
+    setShowGratitudeModal(true);
+  }
+
+  // FIXED: close modal before update
+  async function confirmComplete(gratitude) {
+    const task = taskToComplete;
+    setShowGratitudeModal(false);
+    setTaskToComplete(null);
+
+    try {
+      await updateDoc(doc(db, "tasks", task.id), {
+        status: "completed",
+        gratitude,
+        completedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function cancelComplete() {
+    setShowGratitudeModal(false);
+    setTaskToComplete(null);
+  }
+
+  // ------------------ AI PLANNER ------------------
   async function generatePlan() {
     try {
       setPlannerSuggestions("Generating plan...");
@@ -106,13 +189,13 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       });
 
       const data = await res.json();
-      setPlannerSuggestions(data.plan);
-    } catch (e) {
+      setPlannerSuggestions(data.plan || "No plan generated.");
+    } catch {
       setPlannerSuggestions("⚠️ Failed to generate plan.");
     }
   }
 
-  // Render
+  // ------------------ UI ------------------
   const todayStr = new Date().toISOString().slice(0, 10);
   const isToday = sessionDate === todayStr;
 
@@ -121,19 +204,10 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       style={{
         background: "#fff",
         borderRadius: 16,
-        minHeight: 210,
         padding: "20px 16px 24px",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
       }}
     >
-      <h3
-        style={{
-          marginBottom: 16,
-          fontWeight: 700,
-          fontSize: "1.3em",
-          color: "#2d3748",
-        }}
-      >
+      <h3 style={{ fontWeight: 700, fontSize: "1.3em", marginBottom: 16 }}>
         Tasks for {isToday ? "Today" : sessionDate}
       </h3>
 
@@ -146,7 +220,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         />
       )}
 
-      {/* ⭐ NEW — Show AI Planner button only if ≥ 2 tasks */}
+      {/* ⭐ AI button appears if 2 or more tasks exist */}
       {tasks.length >= 2 && (
         <button
           onClick={generatePlan}
@@ -157,7 +231,6 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
             borderRadius: 8,
             fontWeight: 600,
             marginBottom: 14,
-            display: "block"
           }}
         >
           🔮 Generate AI Day Planner
@@ -168,10 +241,9 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         <div
           style={{
             textAlign: "center",
-            color: "#a0aec0",
-            fontSize: "1.05em",
             padding: "40px 20px",
             fontStyle: "italic",
+            color: "#a0aec0",
           }}
         >
           📝 No tasks for this day
@@ -181,9 +253,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           tasks={tasks}
           onEdit={isToday ? setEditing : undefined}
           onDelete={isToday ? handleDelete : undefined}
-          onMarkOngoing={
-            isToday ? (t) => markTaskStatus(t, "ongoing") : undefined
-          }
+          onMarkOngoing={isToday ? (t) => markTaskStatus(t, "ongoing") : undefined}
           onMarkComplete={isToday ? handleMarkComplete : undefined}
         />
       )}
@@ -196,20 +266,17 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         onCancel={cancelComplete}
       />
 
-      {/* ⭐ NEW — AI Planner Modal */}
+      {/* ⭐ AI PLANNER MODAL */}
       {showPlannerModal && (
         <div
           style={{
             position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.4)",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
-            zIndex: 999,
+            zIndex: 200,
           }}
         >
           <div
@@ -217,35 +284,27 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
               background: "white",
               padding: 24,
               borderRadius: 12,
-              maxWidth: 500,
+              maxWidth: 520,
               width: "90%",
               boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
             }}
           >
-            <h3>🧠 AI Day Planner Suggestions</h3>
-            <div
-              style={{
-                whiteSpace: "pre-wrap",
-                marginTop: 10,
-                color: "#2d3748",
-              }}
-            >
+            <h3>🧠 AI Day Planner</h3>
+            <div style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
               {plannerSuggestions}
             </div>
-
-            <div style={{ textAlign: "right", marginTop: 20 }}>
-              <button
-                onClick={() => setShowPlannerModal(false)}
-                style={{
-                  padding: "8px 16px",
-                  borderRadius: 6,
-                  background: "#4a5568",
-                  color: "white",
-                }}
-              >
-                Close
-              </button>
-            </div>
+            <button
+              onClick={() => setShowPlannerModal(false)}
+              style={{
+                marginTop: 20,
+                background: "#4a5568",
+                color: "white",
+                padding: "8px 16px",
+                borderRadius: 6,
+              }}
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
