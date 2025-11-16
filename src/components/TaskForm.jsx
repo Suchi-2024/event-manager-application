@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { TASK_STATUSES } from "../constants";
+import { TASK_STATUSES, TASK_PRIORITIES, PRIORITY_COLORS, PRIORITY_LABELS, REMINDER_SETTINGS } from "../constants";
 
 function getNowISOString() {
   return new Date().toISOString().slice(0, 16);
@@ -31,12 +31,16 @@ export default function TaskForm({
   const [text, setText] = useState(editing ? editing.text : "");
   const [due, setDue] = useState(editing ? editing.due : getNowISOString());
   const [status, setStatus] = useState(editing ? editing.status : "pending");
+  const [priority, setPriority] = useState(editing ? editing.priority : TASK_PRIORITIES.MEDIUM);
+  const [reminder, setReminder] = useState(editing ? editing.reminder : "1day");
   const [error, setError] = useState("");
 
   useEffect(() => {
     setText(editing ? editing.text : "");
     setDue(editing ? editing.due : getNowISOString());
     setStatus(editing ? editing.status : "pending");
+    setPriority(editing ? editing.priority : TASK_PRIORITIES.MEDIUM);
+    setReminder(editing ? editing.reminder : "1day");
     setError("");
   }, [editing]);
 
@@ -54,27 +58,33 @@ export default function TaskForm({
       return;
     }
 
-    // FIXED: More lenient time validation - allow tasks for today
     const dueDate = new Date(due);
     const now = new Date();
-    
-    // Only check if it's in the past by more than 1 minute (to account for processing time)
+
     if (dueDate.getTime() < now.getTime() - 60000) {
       setError("Due date/time cannot be in the past.");
       return;
     }
 
     if (editing) {
-      onAdd({ ...editing, text: text.trim(), due, status });
+      onAdd({ ...editing, text: text.trim(), due, status, priority, reminder });
       if (onCancelEdit) onCancelEdit();
     } else {
-      onAdd({ text: text.trim(), due, status });
+      onAdd({ 
+        text: text.trim(), 
+        due, 
+        status, 
+        priority,
+        reminder,
+        reminderSent: false
+      });
     }
 
-    // Clear form
     setText("");
     setDue(getNowISOString());
     setStatus("pending");
+    setPriority(TASK_PRIORITIES.MEDIUM);
+    setReminder("1day");
     setError("");
   };
 
@@ -132,11 +142,14 @@ export default function TaskForm({
             e.currentTarget.style.borderColor = "#e2e8f0";
           }}
         />
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
         <select
           value={status}
           onChange={(e) => setStatus(e.target.value)}
           style={{
-            flex: "1 1 100px",
+            flex: "1 1 120px",
             padding: "10px 14px",
             border: "2px solid #e2e8f0",
             borderRadius: 8,
@@ -149,6 +162,52 @@ export default function TaskForm({
           {TASK_STATUSES.filter((s) => s !== "completed").map((s) => (
             <option key={s} value={s}>
               {s.charAt(0).toUpperCase() + s.slice(1)}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={priority}
+          onChange={(e) => setPriority(e.target.value)}
+          style={{
+            flex: "1 1 120px",
+            padding: "10px 14px",
+            border: "2px solid #e2e8f0",
+            borderRadius: 8,
+            fontSize: "0.95em",
+            outline: "none",
+            cursor: "pointer",
+            background: `linear-gradient(90deg, ${PRIORITY_COLORS[priority]}15 0%, transparent 100%)`,
+            fontWeight: 600,
+            color: PRIORITY_COLORS[priority],
+          }}
+          disabled={readOnly || (!!editing && editing.status === "completed")}
+        >
+          {Object.entries(TASK_PRIORITIES).map(([key, value]) => (
+            <option key={value} value={value}>
+              {PRIORITY_LABELS[value]} Priority
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={reminder}
+          onChange={(e) => setReminder(e.target.value)}
+          style={{
+            flex: "1 1 150px",
+            padding: "10px 14px",
+            border: "2px solid #e2e8f0",
+            borderRadius: 8,
+            fontSize: "0.95em",
+            outline: "none",
+            cursor: "pointer",
+          }}
+          disabled={readOnly || (!!editing && editing.status === "completed")}
+        >
+          <option value="">No reminder</option>
+          {Object.entries(REMINDER_SETTINGS).map(([key, value]) => (
+            <option key={key} value={key}>
+              🔔 {value.label}
             </option>
           ))}
         </select>
@@ -177,7 +236,7 @@ export default function TaskForm({
         >
           {editing ? "💾 Save" : "➕ Add Task"}
         </button>
-        
+
         {editing && onCancelEdit && (
           <button
             type="button"
@@ -198,20 +257,25 @@ export default function TaskForm({
         )}
       </div>
 
-                {error && (
+      {error && (
         <div
           style={{
-            color: "#e53e3e",
-            marginTop: 10,
+            marginTop: 12,
+            padding: "10px 14px",
+            background: "#fff5f5",
+            border: "2px solid #fc8181",
+            borderRadius: 8,
+            color: "#c53030",
             fontSize: "0.9em",
-            fontWeight: 500,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
           }}
         >
-          {error}
+          <span>⚠️</span>
+          <span>{error}</span>
         </div>
       )}
     </form>
   );
 }
-
-
