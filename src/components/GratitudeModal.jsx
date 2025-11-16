@@ -7,7 +7,11 @@ export default function GratitudeModal({
   taskText,
 }) {
   const [gratitude, setGratitude] = useState("");
-  if (!show) return null;
+  useEffect(() => {
+  if (!show) {
+    setGratitude("");
+  }
+  }, [show]);
   return (
     <div
       style={{
@@ -75,3 +79,4 @@ export default function GratitudeModal({
     </div>
   );
 }
+
