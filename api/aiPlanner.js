@@ -4,10 +4,14 @@ export default async function handler(req, res) {
 
     const geminiKey = process.env.GEMINI_API_KEY;
 
+    if (!geminiKey) {
+      return res.status(500).json({ error: "Gemini API key missing." });
+    }
+
     const prompt = `
       You are an AI productivity assistant. 
-      The user has tasks for today. Create a detailed day plan.
-
+      Create a detailed, time-ordered plan for the user's day.
+      
       Tasks:
       ${tasks
         .map(
@@ -17,21 +21,32 @@ export default async function handler(req, res) {
         .join("\n")}
     `;
 
-    const r = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" +
-        geminiKey,
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${geminiKey}`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+        }),
       }
     );
 
-    const data = await r.json();
-    const plan = data.candidates?.[0]?.content?.parts?.[0]?.text || "No output.";
+    const data = await response.json();
+    console.log("GEMINI RAW:", JSON.stringify(data, null, 2));
+
+    let plan = "AI could not generate a plan.";
+
+    if (data?.candidates?.length > 0) {
+      const parts = data.candidates[0].content.parts;
+      plan = parts.map((p) => p.text).join("\n").trim();
+    }
 
     res.status(200).json({ plan });
   } catch (err) {
-    res.status(500).json({ error: "AI planning failed" });
+    console.error("Planner error:", err);
+    res.status(500).json({ error: "AI planning failed." });
   }
 }
