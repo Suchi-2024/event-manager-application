@@ -36,31 +36,16 @@ export default function SessionSelector({ selectedDate, onSelectDate }) {
           type="date"
           value={selectedDate}
           style={{ fontSize: "1em", border: "2px solid #e2e8f0", borderRadius: 10, padding: "10px 14px", background: "#fff", fontWeight: 500, color: "#2d3748", cursor: "pointer", transition: "all 0.2s" }}
-          onChange={(e) => {
-            onSelectDate(e.target.value);
-          }}
-          onFocus={(e) => {
-            e.currentTarget.style.borderColor = "#667eea";
-            e.currentTarget.style.boxShadow = "0 0 0 3px rgba(102, 126, 234, 0.1)";
-          }}
-          onBlur={(e) => {
-            e.currentTarget.style.borderColor = "#e2e8f0";
-            e.currentTarget.style.boxShadow = "none";
-          }}
+          onChange={(e) => { onSelectDate(e.target.value); }}
+          onFocus={(e) => { e.currentTarget.style.borderColor = "#667eea"; e.currentTarget.style.boxShadow = "0 0 0 3px rgba(102, 126, 234, 0.1)"; }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = "#e2e8f0"; e.currentTarget.style.boxShadow = "none"; }}
         />
-        <button
-          onClick={() => setShowHistory(!showHistory)}
-          style={{ padding: "10px 18px", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: "0.95em" }}
-        >
+        <button onClick={() => setShowHistory(!showHistory)} style={{ padding: "10px 18px", background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontWeight: 600, fontSize: "0.95em" }}>
           {showHistory ? "📅 Hide Calendar" : "📅 Show Calendar"}
         </button>
 
-        {selectedDate > todayStr && (
-          <span style={{ color: "#667eea", fontSize: "0.95em", fontWeight: 600, background: "#eff6ff", padding: "6px 12px", borderRadius: 8 }}>📆 Future session</span>
-        )}
-        {selectedDate < todayStr && (
-          <span style={{ color: "#718096", fontSize: "0.95em", fontStyle: "italic", background: "#edf2f7", padding: "6px 12px", borderRadius: 8 }}>📖 Past session - read only</span>
-        )}
+        {selectedDate > todayStr && <span style={{ color: "#667eea", fontSize: "0.95em", fontWeight: 600, background: "#eff6ff", padding: "6px 12px", borderRadius: 8 }}>📆 Future session</span>}
+        {selectedDate < todayStr && <span style={{ color: "#718096", fontSize: "0.95em", fontStyle: "italic", background: "#edf2f7", padding: "6px 12px", borderRadius: 8 }}>📖 Past session - read only</span>}
       </div>
 
       {showHistory && (
