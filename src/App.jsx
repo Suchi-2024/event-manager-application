@@ -72,7 +72,7 @@ function AppInner() {
     };
 
     calculateScoreAndStreak();
-    const interval = setInterval(calculateScoreAndStreak, 60000);
+    const interval = setInterval(calculateScoreAndStreak, 300000);
     return () => clearInterval(interval);
   }, [user]);
 
@@ -143,7 +143,7 @@ function AppInner() {
       style={{
         minHeight: "100vh",
         background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-        padding: "20px",
+        padding: "20px 15px",
       }}
     >
       <div
@@ -156,20 +156,21 @@ function AppInner() {
         <div
           style={{
             textAlign: "center",
-            marginBottom: 30,
+            marginBottom: 24,
             color: "#fff",
           }}
         >
           <h1
             style={{
-              fontSize: "2.5em",
-              margin: "0 0 10px 0",
+              fontSize: "clamp(1.8em, 5vw, 2.5em)",
+              margin: "0 0 8px 0",
               fontWeight: 700,
               textShadow: "0 2px 10px rgba(0,0,0,0.2)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: 12,
+              gap: 10,
+              flexWrap: "wrap",
             }}
           >
             <span style={{ fontSize: "1.2em" }}>🗓️</span>
@@ -179,7 +180,7 @@ function AppInner() {
             style={{
               margin: 0,
               opacity: 0.9,
-              fontSize: "1.1em",
+              fontSize: "clamp(0.95em, 3vw, 1.1em)",
               fontWeight: 300,
             }}
           >
