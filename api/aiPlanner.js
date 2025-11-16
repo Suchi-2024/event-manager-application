@@ -1,17 +1,20 @@
 export default async function handler(req, res) {
   try {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
     const { tasks } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    const geminiKey = process.env.GEMINI_API_KEY;
-
-    if (!geminiKey) {
-      return res.status(500).json({ error: "Gemini API key missing." });
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY missing" });
     }
 
     const prompt = `
-      You are an AI productivity assistant. 
-      Create a detailed, time-ordered plan for the user's day.
-      
+      You are an AI productivity assistant.
+      Create an optimized day plan considering deadlines and priority.
+
       Tasks:
       ${tasks
         .map(
@@ -21,32 +24,27 @@ export default async function handler(req, res) {
         .join("\n")}
     `;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${geminiKey}`,
+    const r = await fetch(
+      "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=" +
+        apiKey,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
         }),
       }
     );
 
-    const data = await response.json();
-    console.log("GEMINI RAW:", JSON.stringify(data, null, 2));
+    const data = await r.json();
 
-    let plan = "AI could not generate a plan.";
-
-    if (data?.candidates?.length > 0) {
-      const parts = data.candidates[0].content.parts;
-      plan = parts.map((p) => p.text).join("\n").trim();
-    }
+    const plan =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "AI could not generate a plan.";
 
     res.status(200).json({ plan });
   } catch (err) {
-    console.error("Planner error:", err);
-    res.status(500).json({ error: "AI planning failed." });
+    console.error(err);
+    res.status(500).json({ error: "AI planning failed" });
   }
 }
