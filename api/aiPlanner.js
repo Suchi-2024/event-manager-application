@@ -2,34 +2,34 @@ export default async function handler(req, res) {
   try {
     const { tasks } = req.body;
 
-    const formatted = tasks
-      .map(
-        (t) =>
-          `• ${t.text} (priority: ${t.priority || "medium"}, due: ${
-            t.due
-          }, status: ${t.status})`
-      )
-      .join("\n");
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      return res.status(500).json({ plan: "Gemini API key missing!" });
+    }
 
     const prompt = `
-You are an intelligent productivity planner.
-Given today's tasks:
+You are an AI day-planning assistant.
+Given these tasks with deadlines and priorities, generate a concise plan:
 
-${formatted}
+${tasks
+  .map(
+    (t, i) =>
+      `${i + 1}. Task: ${t.text}
+   Priority: ${t.priority}
+   Due: ${t.due}`
+  )
+  .join("\n\n")}
 
-Create a structured day plan:
-- Which task should be done first, second, etc
-- Estimate time blocks
-- Identify urgent vs important tasks
-- Suggest breaks
-- Provide a high-motivation message
-
-Return in clean bullet points.
-    `;
+Output a step-by-step plan for today including:
+- what to do first
+- estimated time blocks
+- urgency indicators
+- short productivity tips
+`;
 
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" +
-        process.env.GEMINI_API_KEY,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" +
+        key,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -39,14 +39,15 @@ Return in clean bullet points.
       }
     );
 
-    const result = await response.json();
+    const data = await response.json();
 
-    const aiText =
-      result?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "Unable to generate a plan.";
+    const text =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "Unable to generate plan";
 
-    return res.json({ plan: aiText });
-  } catch (e) {
-    return res.json({ plan: "AI generation failed." });
+    res.status(200).json({ plan: text });
+  } catch (err) {
+    console.error("Planner error:", err);
+    res.status(500).json({ plan: "AI Planner failed." });
   }
 }
