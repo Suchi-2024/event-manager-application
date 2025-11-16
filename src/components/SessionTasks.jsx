@@ -27,25 +27,23 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
   const [showGratitudeModal, setShowGratitudeModal] = useState(false);
   const [taskToComplete, setTaskToComplete] = useState(null);
-  const [error, setError] = useState(null);
 
-  // ⭐ AI Planner
-  const [plannerSuggestions, setPlannerSuggestions] = useState("");
-  const [showPlannerModal, setShowPlannerModal] = useState(false);
+  const [plannerText, setPlannerText] = useState("");
+  const [showPlanner, setShowPlanner] = useState(false);
 
-  // cache
   const allTasksCache = useRef(null);
-  const lastFetchTime = useRef(0);
-  const unsubscribeRef = useRef(null);
+  const lastFetch = useRef(0);
+  const unsubRef = useRef(null);
 
-  const dateRange = useMemo(() => {
-    return {
+  const dateRange = useMemo(
+    () => ({
       startOfDay: sessionDate + "T00:00",
       endOfDay: sessionDate + "T23:59",
-    };
-  }, [sessionDate]);
+    }),
+    [sessionDate]
+  );
 
-  // ------------------ LOAD TASKS ------------------
+  // -------------------- LOAD TASKS --------------------
   useEffect(() => {
     if (!user) {
       setLoading(false);
@@ -54,8 +52,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
     const now = Date.now();
 
-    // quick cache
-    if (allTasksCache.current && now - lastFetchTime.current < 30000) {
+    if (allTasksCache.current && now - lastFetch.current < 30000) {
       const filtered = allTasksCache.current.filter(
         (t) => t.due?.slice(0, 10) === sessionDate
       );
@@ -66,8 +63,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     }
 
     setLoading(true);
-
-    if (unsubscribeRef.current) unsubscribeRef.current();
+    if (unsubRef.current) unsubRef.current();
 
     const q = query(
       collection(db, "tasks"),
@@ -80,73 +76,64 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const list = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
-        setTasks(list);
-        lastFetchTime.current = Date.now();
-        allTasksCache.current = list;
-        if (onTasksChange) onTasksChange(list);
+        const arr = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+        setTasks(arr);
+        lastFetch.current = Date.now();
+        allTasksCache.current = arr;
+        if (onTasksChange) onTasksChange(arr);
         setLoading(false);
       },
-      async (err) => {
-        console.warn("⚠️ Index issue — fallback loading");
-        // fallback: load all user's tasks
-        const allQuery = query(collection(db, "tasks"), where("uid", "==", user.uid));
-        const docs = await getDocs(allQuery);
-        const all = docs.docs.map((d) => ({ ...d.data(), id: d.id }));
-        allTasksCache.current = all;
+      async () => {
+        const fullQuery = query(
+          collection(db, "tasks"),
+          where("uid", "==", user.uid)
+        );
+        const docs = await getDocs(fullQuery);
+        const arr = docs.docs.map((d) => ({ ...d.data(), id: d.id }));
+        allTasksCache.current = arr;
 
-        const filtered = all.filter((t) => t.due?.slice(0, 10) === sessionDate);
+        const filtered = arr.filter(
+          (t) => t.due?.slice(0, 10) === sessionDate
+        );
         setTasks(filtered);
         if (onTasksChange) onTasksChange(filtered);
         setLoading(false);
       }
     );
 
-    unsubscribeRef.current = unsub;
+    unsubRef.current = unsub;
     return () => unsub();
   }, [sessionDate, user]);
 
-  // ------------------ CRUD ------------------
+  // -------------------- CRUD --------------------
   async function handleAddOrEdit(task) {
     if (!user) return;
 
-    try {
-      if (editing) {
-        await updateDoc(doc(db, "tasks", task.id), task);
-        setEditing(null);
-      } else {
-        const newTask = {
-          text: task.text.trim(),
-          due: task.due,
-          status: task.status || "pending",
-          priority: task.priority || "medium",
-          reminder: task.reminder || "",
-          reminderSent: false,
-          uid: user.uid,
-          createdAt: new Date().toISOString(),
-        };
-        const ref = await addDoc(collection(db, "tasks"), newTask);
-        setTasks((p) => [...p, { ...newTask, id: ref.id }]);
-      }
-    } catch (err) {
-      console.error(err);
+    if (editing) {
+      await updateDoc(doc(db, "tasks", task.id), task);
+      setEditing(null);
+    } else {
+      const newTask = {
+        text: task.text.trim(),
+        due: task.due,
+        status: task.status || "pending",
+        priority: task.priority || "medium",
+        reminder: task.reminder || "",
+        reminderSent: false,
+        uid: user.uid,
+        createdAt: new Date().toISOString(),
+      };
+      const ref = await addDoc(collection(db, "tasks"), newTask);
+      setTasks((p) => [...p, { ...newTask, id: ref.id }]);
     }
   }
 
   async function handleDelete(task) {
-    try {
-      await deleteDoc(doc(db, "tasks", task.id));
-    } catch (err) {
-      console.error(err);
-    }
+    await deleteDoc(doc(db, "tasks", task.id));
   }
 
   async function markTaskStatus(task, status) {
-    try {
-      await updateDoc(doc(db, "tasks", task.id), { status });
-    } catch (err) {
-      console.error(err);
-    }
+    await updateDoc(doc(db, "tasks", task.id), { status });
   }
 
   function handleMarkComplete(task) {
@@ -154,21 +141,16 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     setShowGratitudeModal(true);
   }
 
-  // FIXED: close modal before update
   async function confirmComplete(gratitude) {
-    const task = taskToComplete;
+    const t = taskToComplete;
     setShowGratitudeModal(false);
     setTaskToComplete(null);
 
-    try {
-      await updateDoc(doc(db, "tasks", task.id), {
-        status: "completed",
-        gratitude,
-        completedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error(err);
-    }
+    await updateDoc(doc(db, "tasks", t.id), {
+      status: "completed",
+      gratitude,
+      completedAt: new Date().toISOString(),
+    });
   }
 
   function cancelComplete() {
@@ -176,12 +158,12 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     setTaskToComplete(null);
   }
 
-  // ------------------ AI PLANNER ------------------
+  // -------------------- AI PLANNER --------------------
   async function generatePlan() {
-    try {
-      setPlannerSuggestions("Generating plan...");
-      setShowPlannerModal(true);
+    setPlannerText("⏳ Generating AI plan...");
+    setShowPlanner(true);
 
+    try {
       const res = await fetch("/api/aiPlanner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -189,24 +171,18 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       });
 
       const data = await res.json();
-      setPlannerSuggestions(data.plan || "No plan generated.");
-    } catch {
-      setPlannerSuggestions("⚠️ Failed to generate plan.");
+      setPlannerText(data.plan || "No output.");
+    } catch (err) {
+      setPlannerText("⚠️ Failed to generate plan.");
     }
   }
 
-  // ------------------ UI ------------------
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const isToday = sessionDate === todayStr;
+  // -------------------- UI --------------------
+  const today = new Date().toISOString().slice(0, 10);
+  const isToday = sessionDate === today;
 
   return (
-    <div
-      style={{
-        background: "#fff",
-        borderRadius: 16,
-        padding: "20px 16px 24px",
-      }}
-    >
+    <div style={{ background: "#fff", borderRadius: 16, padding: "20px 16px" }}>
       <h3 style={{ fontWeight: 700, fontSize: "1.3em", marginBottom: 16 }}>
         Tasks for {isToday ? "Today" : sessionDate}
       </h3>
@@ -220,7 +196,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         />
       )}
 
-      {/* ⭐ AI button appears if 2 or more tasks exist */}
+      {/* AI Button */}
       {tasks.length >= 2 && (
         <button
           onClick={generatePlan}
@@ -230,22 +206,16 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
             padding: "10px 18px",
             borderRadius: 8,
             fontWeight: 600,
-            marginBottom: 14,
+            marginBottom: 20,
           }}
         >
           🔮 Generate AI Day Planner
         </button>
       )}
 
+      {/* Task List */}
       {tasks.length === 0 ? (
-        <div
-          style={{
-            textAlign: "center",
-            padding: "40px 20px",
-            fontStyle: "italic",
-            color: "#a0aec0",
-          }}
-        >
+        <div style={{ textAlign: "center", padding: 30, color: "#999" }}>
           📝 No tasks for this day
         </div>
       ) : (
@@ -266,46 +236,36 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         onCancel={cancelComplete}
       />
 
-      {/* ⭐ AI PLANNER MODAL */}
-      {showPlannerModal && (
+      {/* INLINE AI PLANNER RESULT */}
+      {showPlanner && (
         <div
           style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.35)",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 200,
+            marginTop: 25,
+            padding: 20,
+            borderRadius: 12,
+            background: "#f8f9ff",
+            border: "1px solid #dadaff",
+            whiteSpace: "pre-wrap",
           }}
         >
-          <div
+          <h3 style={{ fontWeight: 700, marginBottom: 12 }}>🧠 AI Day Planner</h3>
+
+          <div style={{ fontSize: "0.95em", color: "#2d3748" }}>
+            {plannerText}
+          </div>
+
+          <button
+            onClick={() => setShowPlanner(false)}
             style={{
-              background: "white",
-              padding: 24,
-              borderRadius: 12,
-              maxWidth: 520,
-              width: "90%",
-              boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
+              marginTop: 15,
+              background: "#4a5568",
+              color: "white",
+              padding: "8px 16px",
+              borderRadius: 6,
             }}
           >
-            <h3>🧠 AI Day Planner</h3>
-            <div style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>
-              {plannerSuggestions}
-            </div>
-            <button
-              onClick={() => setShowPlannerModal(false)}
-              style={{
-                marginTop: 20,
-                background: "#4a5568",
-                color: "white",
-                padding: "8px 16px",
-                borderRadius: 6,
-              }}
-            >
-              Close
-            </button>
-          </div>
+            Hide Plan
+          </button>
         </div>
       )}
     </div>
