@@ -107,26 +107,38 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
   // -------------------- CRUD --------------------
   async function handleAddOrEdit(task) {
-    if (!user) return;
+  if (!user) return;
 
-    if (editing) {
-      await updateDoc(doc(db, "tasks", task.id), task);
-      setEditing(null);
-    } else {
-      const newTask = {
-        text: task.text.trim(),
-        due: task.due,
-        status: task.status || "pending",
-        priority: task.priority || "medium",
-        reminder: task.reminder || "",
-        reminderSent: false,
-        uid: user.uid,
-        createdAt: new Date().toISOString(),
-      };
-      const ref = await addDoc(collection(db, "tasks"), newTask);
-      setTasks((p) => [...p, { ...newTask, id: ref.id }]);
+  if (editing) {
+    await updateDoc(doc(db, "tasks", task.id), task);
+    setEditing(null);
+} else {
+    const newTask = {
+      text: task.text.trim(),
+      due: task.due,
+      status: task.status || "pending",
+      priority: task.priority || "medium",
+      reminder: task.reminder || "",
+      reminderSent: false,
+      uid: user.uid,
+      createdAt: new Date().toISOString(),
+    };
+    
+    await addDoc(collection(db, "tasks"), newTask);
+    
+    // Extract the date from the task's due date
+    const taskDate = task.due.slice(0, 10);
+    const currentSessionDate = sessionDate;
+    
+    // If task is for a different date, offer to switch
+    if (taskDate !== currentSessionDate) {
+      // Dispatch event to parent to change date
+      window.dispatchEvent(
+        new CustomEvent('switchDate', { detail: taskDate })
+      );
     }
   }
+}
 
   async function handleDelete(task) {
     await deleteDoc(doc(db, "tasks", task.id));
@@ -271,3 +283,4 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     </div>
   );
 }
+
