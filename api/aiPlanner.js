@@ -2,52 +2,36 @@ export default async function handler(req, res) {
   try {
     const { tasks } = req.body;
 
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      return res.status(500).json({ plan: "Gemini API key missing!" });
-    }
+    const geminiKey = process.env.GEMINI_API_KEY;
 
     const prompt = `
-You are an AI day-planning assistant.
-Given these tasks with deadlines and priorities, generate a concise plan:
+      You are an AI productivity assistant. 
+      The user has tasks for today. Create a detailed day plan.
 
-${tasks
-  .map(
-    (t, i) =>
-      `${i + 1}. Task: ${t.text}
-   Priority: ${t.priority}
-   Due: ${t.due}`
-  )
-  .join("\n\n")}
+      Tasks:
+      ${tasks
+        .map(
+          (t) =>
+            `• ${t.text} (priority: ${t.priority}, due: ${t.due}, status: ${t.status})`
+        )
+        .join("\n")}
+    `;
 
-Output a step-by-step plan for today including:
-- what to do first
-- estimated time blocks
-- urgency indicators
-- short productivity tips
-`;
-
-    const response = await fetch(
+    const r = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" +
-        key,
+        geminiKey,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
       }
     );
 
-    const data = await response.json();
+    const data = await r.json();
+    const plan = data.candidates?.[0]?.content?.parts?.[0]?.text || "No output.";
 
-    const text =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "Unable to generate plan";
-
-    res.status(200).json({ plan: text });
+    res.status(200).json({ plan });
   } catch (err) {
-    console.error("Planner error:", err);
-    res.status(500).json({ plan: "AI Planner failed." });
+    res.status(500).json({ error: "AI planning failed" });
   }
 }
