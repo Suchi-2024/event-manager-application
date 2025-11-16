@@ -50,12 +50,23 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     [sessionDate]
   );
 
-  const getDateMidnightFromIso = (iso) => {
-    // iso may be "YYYY-MM-DD" or a full ISO
+  // ---------- IST helpers ----------
+  function getISTNowDate() {
+    // returns a Date object representing the current instant in IST timezone
+    // by creating a Date from the locale string of Asia/Kolkata
+    return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  }
+
+  function getISTMidnightFromIso(iso) {
+    // Accepts "YYYY-MM-DD" or any ISO string, returns midnight IST Date
+    // Construct a Date from the iso interpreted in local zone, then convert to IST midnight
+    // Simpler: create a date from iso then make an equivalent in IST by using toLocaleString
     const d = new Date(iso);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  };
+    // convert to IST date-time string then back to Date to lock in IST time
+    const ist = new Date(d.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    ist.setHours(0, 0, 0, 0);
+    return ist;
+  }
 
   // -------------------- LOAD TASKS --------------------
   useEffect(() => {
@@ -134,11 +145,19 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     const due = task.due;
     if (!due) return alert("Please select a due date/time.");
 
-    // Prevent adding past date/time
-    const now = new Date();
-    const selected = new Date(due);
-    if (selected < now) {
-      return alert("You cannot add a task in the past. Please choose a future date/time.");
+    // Prevent adding past date/time according to IST
+    const nowIst = getISTNowDate();
+    const selectedLocal = new Date(due); // user's local time selected
+    // Convert selectedLocal to an instant in time and then compare with IST now:
+    // but simplest approach: compare instants (selectedLocal.getTime()) against now's instant.
+    // However the user's selection is a local datetime-local value — it's interpreted in the browser's local timezone.
+    if (selectedLocal.getTime() < new Date().getTime()) {
+      // If user's local selection is already in the past (local), block.
+      // Also enforce IST-based block: if IST now is after the selected instant, block:
+      const selectedInstant = selectedLocal.getTime();
+      if (selectedInstant < nowIst.getTime()) {
+        return alert("You cannot add a task in the past (IST). Please choose a future date/time.");
+      }
     }
 
     // Extract date-only
@@ -184,6 +203,10 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           text,
           due,
           dueDate: due.slice(0, 10),
+          // reminder fields might be included in task (see TaskForm)
+          reminderMinutes: task.reminderMinutes ?? null,
+          reminderLabel: task.reminderLabel ?? "",
+          priority: task.priority ?? "medium",
         });
         setEditing(null);
         // notify score/streak in case status changed elsewhere
@@ -199,7 +222,8 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         due,
         status: task.status || "pending",
         priority: task.priority || "medium",
-        reminder: task.reminder || "",
+        reminderMinutes: task.reminderMinutes ?? null,
+        reminderLabel: task.reminderLabel ?? "",
         reminderSent: false,
         uid: user.uid,
         createdAt: new Date().toISOString(),
@@ -233,6 +257,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       window.dispatchEvent(new CustomEvent("tasksChanged"));
     } catch (err) {
       console.error("Delete failed:", err);
+      alert("Failed to delete task.");
     }
   }
 
@@ -264,6 +289,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       window.dispatchEvent(new CustomEvent("tasksChanged"));
     } catch (err) {
       console.error("Confirm complete failed:", err);
+      alert("Failed to mark task completed.");
     }
   }
 
@@ -291,10 +317,10 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     }
   }
 
-  // UI helpers: robust isToday/isFuture/isPast
-  const todayMid = new Date();
+  // UI helpers: robust isToday/isFuture/isPast using IST
+  const todayMid = getISTNowDate();
   todayMid.setHours(0, 0, 0, 0);
-  const selectedMid = getDateMidnightFromIso(sessionDate);
+  const selectedMid = getISTMidnightFromIso(sessionDate);
 
   const isToday = selectedMid.getTime() === todayMid.getTime();
   const isFuture = selectedMid.getTime() > todayMid.getTime();
@@ -302,18 +328,27 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
   if (loading) {
     return (
-      <div style={{
-        background: "#fff",
-        borderRadius: 16,
-        padding: "40px 20px",
-        textAlign: "center",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-        border: "1px solid rgba(102, 126, 234, 0.1)",
-      }}>
-        <div style={{
-          width: 50, height: 50, border: "4px solid #f3f4f6", borderTop: "4px solid #667eea",
-          borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 15px"
-        }} />
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 16,
+          padding: "40px 20px",
+          textAlign: "center",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+          border: "1px solid rgba(102, 126, 234, 0.1)",
+        }}
+      >
+        <div
+          style={{
+            width: 50,
+            height: 50,
+            border: "4px solid #f3f4f6",
+            borderTop: "4px solid #667eea",
+            borderRadius: "50%",
+            animation: "spin 1s linear infinite",
+            margin: "0 auto 15px",
+          }}
+        />
         <div style={{ color: "#718096", fontSize: "1.1em" }}>Loading tasks...</div>
         <style>{`@keyframes spin {0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}`}</style>
       </div>
@@ -321,31 +356,63 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   }
 
   return (
-    <div style={{
-      background: "#fff", borderRadius: 16, padding: "20px 16px",
-      boxShadow: "0 4px 20px rgba(0,0,0,0.08)", border: "1px solid rgba(102, 126, 234, 0.1)"
-    }}>
+    <div
+      style={{
+        background: "#fff",
+        borderRadius: 16,
+        padding: "20px 16px",
+        boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+        border: "1px solid rgba(102, 126, 234, 0.1)",
+      }}
+    >
       {/* Future-jump toast */}
       {futureJumpMessage && (
-        <div style={{
-          background: "#EBF4FF", border: "1px solid #90CDF4", padding: "12px 16px",
-          borderRadius: 10, marginBottom: 15, display: "flex", justifyContent: "space-between",
-          alignItems: "center", color: "#2C5282", fontWeight: 500
-        }}>
+        <div
+          style={{
+            background: "#EBF4FF",
+            border: "1px solid #90CDF4",
+            padding: "12px 16px",
+            borderRadius: 10,
+            marginBottom: 15,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            color: "#2C5282",
+            fontWeight: 500,
+            transition: "transform 0.2s",
+          }}
+        >
           Task added for <strong style={{ margin: "0 8px" }}>{futureJumpMessage}</strong>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => {
-              window.dispatchEvent(new CustomEvent("switchDate", { detail: futureJumpMessage }));
-              setFutureJumpMessage(null);
-            }} style={{
-              background: "#2B6CB0", color: "#fff", padding: "6px 12px",
-              borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600
-            }}>
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("switchDate", { detail: futureJumpMessage }));
+                setFutureJumpMessage(null);
+              }}
+              style={{
+                background: "#2B6CB0",
+                color: "#fff",
+                padding: "6px 12px",
+                borderRadius: 8,
+                border: "none",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
               Go to Task →
             </button>
-            <button onClick={() => setFutureJumpMessage(null)} style={{
-              background: "transparent", border: "none", color: "#2C5282", cursor: "pointer"
-            }}>
+            <button
+              onClick={() => setFutureJumpMessage(null)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#2C5282",
+                cursor: "pointer",
+                fontSize: 18,
+                lineHeight: "18px",
+              }}
+              aria-label="close"
+            >
               ×
             </button>
           </div>
@@ -354,26 +421,57 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
       <h3 style={{ fontWeight: 700, fontSize: "1.3em", marginBottom: 16, color: "#2d3748" }}>
         Tasks for {isToday ? "Today" : sessionDate}
-        {isFuture && <span style={{ marginLeft: 10, fontSize: "0.7em", color: "#667eea", background: "#eff6ff", padding: "4px 10px", borderRadius: 6 }}>📆 Future</span>}
-        {isPast && <span style={{ marginLeft: 10, fontSize: "0.7em", color: "#718096", background: "#edf2f7", padding: "4px 10px", borderRadius: 6 }}>📖 Past</span>}
+        {isFuture && (
+          <span
+            style={{
+              marginLeft: 10,
+              fontSize: "0.7em",
+              color: "#667eea",
+              background: "#eff6ff",
+              padding: "4px 10px",
+              borderRadius: 6,
+            }}
+          >
+            📆 Future
+          </span>
+        )}
+        {isPast && (
+          <span
+            style={{
+              marginLeft: 10,
+              fontSize: "0.7em",
+              color: "#718096",
+              background: "#edf2f7",
+              padding: "4px 10px",
+              borderRadius: 6,
+            }}
+          >
+            📖 Past
+          </span>
+        )}
       </h3>
 
       {/* Only show form for today and future dates */}
       {(isToday || isFuture) && (
-        <TaskForm
-          onAdd={handleAddOrEdit}
-          tasks={tasks}
-          editing={editing}
-          onCancelEdit={() => setEditing(null)}
-        />
+        <TaskForm onAdd={handleAddOrEdit} tasks={tasks} editing={editing} onCancelEdit={() => setEditing(null)} />
       )}
 
       {/* AI Button - only for today with 2+ tasks */}
       {isToday && tasks.length >= 2 && (
-        <button onClick={generatePlan} style={{
-          background: "#4f46e5", color: "white", padding: "10px 18px", borderRadius: 8,
-          fontWeight: 600, marginBottom: 20, border: "none", cursor: "pointer"
-        }}>
+        <button
+          onClick={generatePlan}
+          style={{
+            background: "#4f46e5",
+            color: "white",
+            padding: "10px 18px",
+            borderRadius: 8,
+            fontWeight: 600,
+            marginBottom: 20,
+            border: "none",
+            cursor: "pointer",
+            transition: "transform 0.15s",
+          }}
+        >
           🔮 Generate AI Day Planner
         </button>
       )}
