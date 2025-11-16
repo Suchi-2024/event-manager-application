@@ -12,7 +12,7 @@ export default function TaskList({ tasks = [], onEdit, onDelete, onMarkOngoing, 
               📅 {t.due?.replace("T", ", ")} {t.reminder ? " 🔔 Reminder set" : ""}
             </div>
             <div style={{ marginTop: 6 }}>
-              <span style={{ background: "#ffd84d", padding: "4px 8px", borderRadius: 8, fontSize: "0.8em" }}>{t.status || "Pending"}</span>
+              <span style={{ background: "#ffd84d", padding: "4px 8px", borderRadius: 8, fontSize: "0.8em" }}>{t.status || "pending"}</span>
             </div>
           </div>
 
