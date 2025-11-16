@@ -16,10 +16,13 @@ function AppInner() {
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
 
-  // ✅ NEW: Listen for date switch requests
+  // ✅ Listen for date switch requests from child components
   useEffect(() => {
     const handleDateSwitch = (e) => {
+      console.log("🔄 App received date switch request:", e.detail);
       setSelectedDate(e.detail);
+      
+      // Smooth scroll to top to show the date change
       window.scrollTo({ top: 0, behavior: 'smooth' });
     };
     
@@ -94,6 +97,7 @@ function AppInner() {
     }
   };
 
+  // Recalculate score and streak when tasks change
   useEffect(() => {
     const recalculate = async () => {
       if (!user) return;
