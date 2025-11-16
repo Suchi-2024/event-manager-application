@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { db } from "../firebase";
 import {
   collection,
@@ -10,6 +10,7 @@ import {
   updateDoc,
   doc,
   deleteDoc,
+  getDocs,
 } from "firebase/firestore";
 import TaskList from "./TaskList";
 import TaskForm from "./TaskForm";
@@ -25,10 +26,17 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   const [taskToComplete, setTaskToComplete] = useState(null);
   const [error, setError] = useState(null);
 
-  // Cache and refs for optimization
-  const cache = useRef({});
+  // Cache all user tasks once
+  const allTasksCache = useRef(null);
+  const lastFetchTime = useRef(0);
   const unsubscribeRef = useRef(null);
-  const lastSessionDateRef = useRef(sessionDate);
+
+  // Memoize date range for the query
+  const dateRange = useMemo(() => {
+    const startOfDay = sessionDate + "T00:00";
+    const endOfDay = sessionDate + "T23:59";
+    return { startOfDay, endOfDay };
+  }, [sessionDate]);
 
   useEffect(() => {
     if (!user || !user.emailVerified) {
@@ -37,18 +45,19 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       return;
     }
 
-    // Check if we already have cached data for this session
-    const cacheKey = `${user.uid}-${sessionDate}`;
-    if (
-      cache.current[cacheKey] &&
-      lastSessionDateRef.current === sessionDate
-    ) {
-      setTasks(cache.current[cacheKey]);
+    const now = Date.now();
+    
+    // If we have cached data and it's less than 30 seconds old, use cache
+    if (allTasksCache.current && now - lastFetchTime.current < 30000) {
+      const filtered = allTasksCache.current.filter(
+        (task) => task.due?.slice(0, 10) === sessionDate
+      );
+      setTasks(filtered);
       setLoading(false);
+      if (onTasksChange) onTasksChange(filtered);
       return;
     }
 
-    lastSessionDateRef.current = sessionDate;
     setLoading(true);
     setError(null);
 
@@ -57,42 +66,98 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
       unsubscribeRef.current();
     }
 
-    // Load ALL user's tasks and filter in JS (avoids composite index)
+    // OPTION 1: Try date range query first (requires composite index)
+    const { startOfDay, endOfDay } = dateRange;
+    
     const q = query(
       collection(db, "tasks"),
       where("uid", "==", user.uid),
+      where("due", ">=", startOfDay),
+      where("due", "<=", endOfDay),
       orderBy("due", "asc")
     );
 
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const allTasks = snap.docs.map((doc) => ({
-          ...doc.data(),
-          id: doc.id,
-        }));
-
-        // Filter by date in JavaScript
-        const filtered = allTasks.filter(
-          (task) => task.due?.slice(0, 10) === sessionDate
-        );
-
-        // Update cache
-        cache.current[cacheKey] = filtered;
-
-        setTasks(filtered);
+        const t = snap.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+        
+        setTasks(t);
         setLoading(false);
+        lastFetchTime.current = Date.now();
 
-        if (onTasksChange) onTasksChange(filtered);
+        if (onTasksChange) onTasksChange(t);
       },
-      (err) => {
+      async (err) => {
         console.error("Firestore error:", err);
-        if (err.code === "permission-denied") {
+
+        // If composite index is missing, fall back to loading all tasks
+        if (err.code === "failed-precondition") {
+          console.warn("Composite index missing, falling back to full query...");
+          
+          try {
+            // Load ALL tasks once using getDocs (one-time read)
+            const allTasksQuery = query(
+              collection(db, "tasks"),
+              where("uid", "==", user.uid)
+            );
+            
+            const snapshot = await getDocs(allTasksQuery);
+            const allTasks = snapshot.docs.map((doc) => ({
+              ...doc.data(),
+              id: doc.id,
+            }));
+
+            // Cache all tasks
+            allTasksCache.current = allTasks;
+            lastFetchTime.current = Date.now();
+
+            // Filter by date in JavaScript
+            const filtered = allTasks.filter(
+              (task) => task.due?.slice(0, 10) === sessionDate
+            );
+
+            setTasks(filtered);
+            setLoading(false);
+
+            if (onTasksChange) onTasksChange(filtered);
+
+            // Set up real-time listener for all tasks
+            const realtimeQuery = query(
+              collection(db, "tasks"),
+              where("uid", "==", user.uid)
+            );
+
+            const realtimeUnsub = onSnapshot(realtimeQuery, (snap) => {
+              const updated = snap.docs.map((doc) => ({
+                ...doc.data(),
+                id: doc.id,
+              }));
+
+              allTasksCache.current = updated;
+              lastFetchTime.current = Date.now();
+
+              const filteredUpdated = updated.filter(
+                (task) => task.due?.slice(0, 10) === sessionDate
+              );
+
+              setTasks(filteredUpdated);
+              if (onTasksChange) onTasksChange(filteredUpdated);
+            });
+
+            unsubscribeRef.current = realtimeUnsub;
+          } catch (fallbackErr) {
+            console.error("Fallback query error:", fallbackErr);
+            setError("Failed to load tasks. Please refresh the page.");
+            setLoading(false);
+          }
+        } else if (err.code === "permission-denied") {
           setError("Permission denied. Please verify your email.");
+          setLoading(false);
         } else {
-          setError("Failed to load tasks. Please try again.");
+          setError("Failed to load tasks. Please refresh the page.");
+          setLoading(false);
         }
-        setLoading(false);
       }
     );
 
@@ -101,9 +166,9 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     return () => {
       if (unsub) unsub();
     };
-  }, [sessionDate, user, onTasksChange]);
+  }, [sessionDate, user, onTasksChange, dateRange]);
 
-  // Optimistic updates for better UX
+  // Optimistic CRUD operations
   async function handleAddOrEdit(task) {
     if (!user?.emailVerified) {
       setError("Email verification required to manage tasks.");
@@ -112,7 +177,6 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
     try {
       if (editing) {
-        // Optimistic update
         setTasks((prev) =>
           prev.map((t) => (t.id === editing.id ? { ...t, ...task } : t))
         );
@@ -121,6 +185,14 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           ...task,
           uid: user.uid,
         });
+        
+        // Update cache
+        if (allTasksCache.current) {
+          allTasksCache.current = allTasksCache.current.map((t) =>
+            t.id === task.id ? { ...t, ...task } : t
+          );
+        }
+        
         setEditing(null);
       } else {
         const newTask = {
@@ -130,7 +202,16 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           createdAt: new Date().toISOString(),
         };
 
-        await addDoc(collection(db, "tasks"), newTask);
+        const docRef = await addDoc(collection(db, "tasks"), newTask);
+        
+        // Optimistically add to UI
+        const taskWithId = { ...newTask, id: docRef.id };
+        setTasks((prev) => [...prev, taskWithId]);
+        
+        // Update cache
+        if (allTasksCache.current) {
+          allTasksCache.current.push(taskWithId);
+        }
       }
       setError(null);
     } catch (err) {
@@ -146,16 +227,21 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     }
 
     try {
-      // Optimistic update
       setTasks((prev) => prev.filter((t) => t.id !== task.id));
-
+      
       await deleteDoc(doc(db, "tasks", task.id));
+      
+      // Update cache
+      if (allTasksCache.current) {
+        allTasksCache.current = allTasksCache.current.filter(
+          (t) => t.id !== task.id
+        );
+      }
+      
       setError(null);
     } catch (err) {
       console.error("Error deleting task:", err);
       setError("Failed to delete task.");
-      // Reload on error
-      setLoading(true);
     }
   }
 
@@ -166,12 +252,19 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     }
 
     try {
-      // Optimistic update
       setTasks((prev) =>
         prev.map((t) => (t.id === task.id ? { ...t, status } : t))
       );
 
       await updateDoc(doc(db, "tasks", task.id), { status });
+      
+      // Update cache
+      if (allTasksCache.current) {
+        allTasksCache.current = allTasksCache.current.map((t) =>
+          t.id === task.id ? { ...t, status } : t
+        );
+      }
+      
       setError(null);
     } catch (err) {
       console.error("Error updating task:", err);
@@ -198,7 +291,6 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
     if (taskToComplete) {
       try {
-        // Optimistic update
         setTasks((prev) =>
           prev.map((t) =>
             t.id === taskToComplete.id
@@ -212,6 +304,16 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           gratitude,
           completedAt: new Date().toISOString(),
         });
+        
+        // Update cache
+        if (allTasksCache.current) {
+          allTasksCache.current = allTasksCache.current.map((t) =>
+            t.id === taskToComplete.id
+              ? { ...t, status: "completed", gratitude }
+              : t
+          );
+        }
+        
         setError(null);
       } catch (err) {
         console.error("Error completing task:", err);
@@ -284,10 +386,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         <div style={{ fontSize: "2em", marginBottom: 10 }}>⚠️</div>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>{error}</div>
         <button
-          onClick={() => {
-            setError(null);
-            setLoading(true);
-          }}
+          onClick={() => window.location.reload()}
           style={{
             marginTop: 10,
             padding: "8px 16px",
@@ -299,7 +398,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
             fontWeight: 600,
           }}
         >
-          Retry
+          Refresh Page
         </button>
       </div>
     );
