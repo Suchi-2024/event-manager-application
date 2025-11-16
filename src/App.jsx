@@ -24,7 +24,7 @@ function AppInner() {
     return () => window.removeEventListener("switchDate", handleDateSwitch);
   }, []);
 
-  // calculate score & streak (same logic but wrapped)
+  // calculate score & streak
   const calculateScoreAndStreak = async () => {
     if (!user) return;
     try {
@@ -50,7 +50,6 @@ function AppInner() {
           currentStreak++;
           checkDate.setDate(checkDate.getDate() - 1);
         } else {
-          // if today had none, skip it and check previous day (keeps streak logic consistent)
           if (dateStr === new Date().toISOString().slice(0, 10)) {
             checkDate.setDate(checkDate.getDate() - 1);
             continue;
@@ -72,9 +71,7 @@ function AppInner() {
 
   // recalc when tasks changed
   useEffect(() => {
-    const recalc = () => {
-      calculateScoreAndStreak();
-    };
+    const recalc = () => calculateScoreAndStreak();
     window.addEventListener("tasksChanged", recalc);
     return () => window.removeEventListener("tasksChanged", recalc);
   }, [user]);
