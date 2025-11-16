@@ -1,3 +1,4 @@
+// src/components/SessionTasks.jsx
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import { db } from "../firebase";
 import {
@@ -11,6 +12,7 @@ import {
   doc,
   deleteDoc,
   getDocs,
+  limit,
 } from "firebase/firestore";
 
 import TaskList from "./TaskList";
@@ -31,10 +33,12 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   const [plannerText, setPlannerText] = useState("");
   const [showPlanner, setShowPlanner] = useState(false);
 
-  const allTasksCache = useRef(null);
+  // Cache per-date
+  const allTasksCache = useRef(null); // { date: '2025-11-16', tasks: [...] }
   const lastFetch = useRef(0);
   const unsubRef = useRef(null);
 
+  // dateRange for queries (string format consistent with your tasks.due)
   const dateRange = useMemo(
     () => ({
       startOfDay: sessionDate + "T00:00",
@@ -43,28 +47,42 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     [sessionDate]
   );
 
-  // -------------------- LOAD TASKS --------------------
+  // robust date comparisons (remove timezone issues)
+  const getDateMidnight = (isoDateStr) => {
+    const d = new Date(isoDateStr);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
   useEffect(() => {
     if (!user) {
       setLoading(false);
       return;
     }
 
+    // Use cache only if it is for THIS selected date and recent
     const now = Date.now();
-
-    if (allTasksCache.current && now - lastFetch.current < 30000) {
-      const filtered = allTasksCache.current.filter(
-        (t) => t.due?.slice(0, 10) === sessionDate
-      );
-      setTasks(filtered);
+    if (
+      allTasksCache.current &&
+      allTasksCache.current.date === sessionDate &&
+      now - lastFetch.current < 30000
+    ) {
+      setTasks(allTasksCache.current.tasks);
       setLoading(false);
-      if (onTasksChange) onTasksChange(filtered);
+      if (onTasksChange) onTasksChange(allTasksCache.current.tasks);
       return;
     }
 
     setLoading(true);
-    if (unsubRef.current) unsubRef.current();
 
+    // Clean previous listener
+    if (unsubRef.current) {
+      unsubRef.current();
+      unsubRef.current = null;
+    }
+
+    // Primary (recommended) query: use range on 'due' and orderBy('due')
+    // Make sure you have an index for uid ASC + due ASC in Firestore console.
     const q = query(
       collection(db, "tasks"),
       where("uid", "==", user.uid),
@@ -79,44 +97,84 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         const arr = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
         setTasks(arr);
         lastFetch.current = Date.now();
-        allTasksCache.current = arr;
+        allTasksCache.current = { date: sessionDate, tasks: arr };
         if (onTasksChange) onTasksChange(arr);
         setLoading(false);
       },
-      async (err) => {
-        console.log("Query failed, falling back to full query...");
-        // Fallback to loading all tasks
-        const fullQuery = query(
-          collection(db, "tasks"),
-          where("uid", "==", user.uid)
-        );
-        const docs = await getDocs(fullQuery);
-        const arr = docs.docs.map((d) => ({ ...d.data(), id: d.id }));
-        allTasksCache.current = arr;
-
-        const filtered = arr.filter(
-          (t) => t.due?.slice(0, 10) === sessionDate
-        );
-        setTasks(filtered);
-        if (onTasksChange) onTasksChange(filtered);
+      (err) => {
+        console.error("Firestore realtime query failed:", err);
+        // Do NOT fallback to full user query — that caused duplicates & slowness.
+        setTasks([]);
         setLoading(false);
       }
     );
 
     unsubRef.current = unsub;
-    return () => unsub();
+    return () => {
+      if (unsub) unsub();
+      unsubRef.current = null;
+    };
   }, [sessionDate, user, onTasksChange, dateRange]);
 
-  // -------------------- CRUD --------------------
+  // ---------- CRUD ----------
   async function handleAddOrEdit(task) {
     if (!user) return;
 
-    if (editing) {
-      await updateDoc(doc(db, "tasks", task.id), task);
-      setEditing(null);
+    // Normalize text
+    const text = (task.text || "").trim();
+    if (!text) return;
+
+    const taskDate = task.due?.slice(0, 10);
+    if (!taskDate) return alert("Invalid due date");
+
+    // Duplicate check (Option A: same text + same day blocked)
+    // Fast client-side check if cache has same date
+    if (allTasksCache.current && allTasksCache.current.date === taskDate) {
+      const dup = allTasksCache.current.tasks.find(
+        (t) => t.text?.trim() === text && t.due?.slice(0, 10) === taskDate
+      );
+      if (dup && (!task.id || dup.id !== task.id)) {
+        return alert("Duplicate task for the same day blocked.");
+      }
     } else {
+      // Safe server-side check: query for same uid + text, then compare date slices
+      try {
+        const q = query(
+          collection(db, "tasks"),
+          where("uid", "==", user.uid),
+          where("text", "==", text),
+          limit(5)
+        );
+        const snap = await getDocs(q);
+        const found = snap.docs
+          .map((d) => ({ ...d.data(), id: d.id }))
+          .find((t) => t.due?.slice(0, 10) === taskDate && (!task.id || t.id !== task.id));
+        if (found) {
+          return alert("Duplicate task for the same day blocked.");
+        }
+      } catch (err) {
+        console.error("Duplicate check failed:", err);
+        // allow creation if check failed? better to warn user
+        // we'll proceed (optionally you can block)
+      }
+    }
+
+    if (editing) {
+      // editing existing
+      try {
+        await updateDoc(doc(db, "tasks", task.id), {
+          ...task,
+          text,
+        });
+        setEditing(null);
+      } catch (err) {
+        console.error("Update failed:", err);
+        alert("Failed to update task.");
+      }
+    } else {
+      // new task
       const newTask = {
-        text: task.text.trim(),
+        text,
         due: task.due,
         status: task.status || "pending",
         priority: task.priority || "medium",
@@ -124,37 +182,41 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         reminderSent: false,
         uid: user.uid,
         createdAt: new Date().toISOString(),
+        // helpful derived field — optional if you already persist dueDate
+        dueDate: task.due?.slice(0, 10),
       };
-      
-      await addDoc(collection(db, "tasks"), newTask);
-      
-      // Extract the date from the task's due date
-      const taskDate = task.due.slice(0, 10);
-      const currentSessionDate = sessionDate;
-      
-      console.log("✅ Task created for:", taskDate);
-      console.log("📅 Current session:", currentSessionDate);
-      
-      // If task is for a different date, automatically switch
-      if (taskDate !== currentSessionDate) {
-        console.log("🔄 Switching to date:", taskDate);
-        
-        // Small delay to ensure task is saved
-        setTimeout(() => {
-          window.dispatchEvent(
-            new CustomEvent('switchDate', { detail: taskDate })
-          );
-        }, 100);
+
+      try {
+        await addDoc(collection(db, "tasks"), newTask);
+
+        // if created for other date, dispatch switchDate (small delay to let realtime listener update)
+        const createdDate = newTask.dueDate;
+        if (createdDate && createdDate !== sessionDate) {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("switchDate", { detail: createdDate }));
+          }, 200);
+        }
+      } catch (err) {
+        console.error("Add task failed:", err);
+        alert("Failed to create task.");
       }
     }
   }
 
   async function handleDelete(task) {
-    await deleteDoc(doc(db, "tasks", task.id));
+    try {
+      await deleteDoc(doc(db, "tasks", task.id));
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
   }
 
   async function markTaskStatus(task, status) {
-    await updateDoc(doc(db, "tasks", task.id), { status });
+    try {
+      await updateDoc(doc(db, "tasks", task.id), { status });
+    } catch (err) {
+      console.error("Mark status failed:", err);
+    }
   }
 
   function handleMarkComplete(task) {
@@ -166,12 +228,18 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     const t = taskToComplete;
     setShowGratitudeModal(false);
     setTaskToComplete(null);
-
-    await updateDoc(doc(db, "tasks", t.id), {
-      status: "completed",
-      gratitude,
-      completedAt: new Date().toISOString(),
-    });
+    if (!t) return;
+    try {
+      await updateDoc(doc(db, "tasks", t.id), {
+        status: "completed",
+        gratitude,
+        completedAt: new Date().toISOString(),
+      });
+      // emit tasksChanged to update score/streak
+      window.dispatchEvent(new CustomEvent("tasksChanged"));
+    } catch (err) {
+      console.error("Confirm complete failed:", err);
+    }
   }
 
   function cancelComplete() {
@@ -179,7 +247,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     setTaskToComplete(null);
   }
 
-  // -------------------- AI PLANNER --------------------
+  // ---------- AI PLANNER (unchanged) ----------
   async function generatePlan() {
     setPlannerText("⏳ Generating AI plan...");
     setShowPlanner(true);
@@ -198,11 +266,14 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     }
   }
 
-  // -------------------- UI --------------------
-  const today = new Date().toISOString().slice(0, 10);
-  const isToday = sessionDate === today;
-  const isFuture = sessionDate > today;
-  const isPast = sessionDate < today;
+  // UI: robust isToday/isFuture/isPast
+  const todayMid = new Date();
+  todayMid.setHours(0, 0, 0, 0);
+  const selectedMid = getDateMidnight(sessionDate);
+
+  const isToday = selectedMid.getTime() === todayMid.getTime();
+  const isFuture = selectedMid.getTime() > todayMid.getTime();
+  const isPast = selectedMid.getTime() < todayMid.getTime();
 
   if (loading) {
     return (
@@ -227,17 +298,8 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
             margin: "0 auto 15px",
           }}
         />
-        <div style={{ color: "#718096", fontSize: "1.1em" }}>
-          Loading tasks...
-        </div>
-        <style>
-          {`
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-          `}
-        </style>
+        <div style={{ color: "#718096", fontSize: "1.1em" }}>Loading tasks...</div>
+        <style>{`@keyframes spin {0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}`}</style>
       </div>
     );
   }
@@ -252,56 +314,24 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         border: "1px solid rgba(102, 126, 234, 0.1)",
       }}
     >
-      <h3
-        style={{
-          fontWeight: 700,
-          fontSize: "1.3em",
-          marginBottom: 16,
-          color: "#2d3748",
-        }}
-      >
+      <h3 style={{ fontWeight: 700, fontSize: "1.3em", marginBottom: 16, color: "#2d3748" }}>
         Tasks for {isToday ? "Today" : sessionDate}
         {isFuture && (
-          <span
-            style={{
-              marginLeft: 10,
-              fontSize: "0.7em",
-              color: "#667eea",
-              background: "#eff6ff",
-              padding: "4px 10px",
-              borderRadius: 6,
-            }}
-          >
+          <span style={{ marginLeft: 10, fontSize: "0.7em", color: "#667eea", background: "#eff6ff", padding: "4px 10px", borderRadius: 6 }}>
             📆 Future
           </span>
         )}
         {isPast && (
-          <span
-            style={{
-              marginLeft: 10,
-              fontSize: "0.7em",
-              color: "#718096",
-              background: "#edf2f7",
-              padding: "4px 10px",
-              borderRadius: 6,
-            }}
-          >
+          <span style={{ marginLeft: 10, fontSize: "0.7em", color: "#718096", background: "#edf2f7", padding: "4px 10px", borderRadius: 6 }}>
             📖 Past
           </span>
         )}
       </h3>
 
-      {/* Only show form for today and future dates */}
       {(isToday || isFuture) && (
-        <TaskForm
-          onAdd={handleAddOrEdit}
-          tasks={tasks}
-          editing={editing}
-          onCancelEdit={() => setEditing(null)}
-        />
+        <TaskForm onAdd={handleAddOrEdit} tasks={tasks} editing={editing} onCancelEdit={() => setEditing(null)} />
       )}
 
-      {/* AI Button - only for today with 2+ tasks */}
       {isToday && tasks.length >= 2 && (
         <button
           onClick={generatePlan}
@@ -314,31 +344,14 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
             marginBottom: 20,
             border: "none",
             cursor: "pointer",
-            transition: "transform 0.2s",
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.transform = "translateY(-2px)";
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.transform = "translateY(0)";
           }}
         >
           🔮 Generate AI Day Planner
         </button>
       )}
 
-      {/* Task List */}
       {tasks.length === 0 ? (
-        <div
-          style={{
-            textAlign: "center",
-            padding: 40,
-            color: "#a0aec0",
-            fontStyle: "italic",
-          }}
-        >
-          📝 No tasks for this day
-        </div>
+        <div style={{ textAlign: "center", padding: 40, color: "#a0aec0", fontStyle: "italic" }}>📝 No tasks for this day</div>
       ) : (
         <TaskList
           tasks={tasks}
@@ -349,46 +362,13 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         />
       )}
 
-      {/* Gratitude Modal */}
-      <GratitudeModal
-        show={showGratitudeModal}
-        taskText={taskToComplete?.text || ""}
-        onConfirm={confirmComplete}
-        onCancel={cancelComplete}
-      />
+      <GratitudeModal show={showGratitudeModal} taskText={taskToComplete?.text || ""} onConfirm={confirmComplete} onCancel={cancelComplete} />
 
-      {/* INLINE AI PLANNER RESULT */}
       {showPlanner && (
-        <div
-          style={{
-            marginTop: 25,
-            padding: 20,
-            borderRadius: 12,
-            background: "#f8f9ff",
-            border: "1px solid #dadaff",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          <h3 style={{ fontWeight: 700, marginBottom: 12 }}>
-            🧠 AI Day Planner
-          </h3>
-
-          <div style={{ fontSize: "0.95em", color: "#2d3748" }}>
-            {plannerText}
-          </div>
-
-          <button
-            onClick={() => setShowPlanner(false)}
-            style={{
-              marginTop: 15,
-              background: "#4a5568",
-              color: "white",
-              padding: "8px 16px",
-              borderRadius: 6,
-              border: "none",
-              cursor: "pointer",
-            }}
-          >
+        <div style={{ marginTop: 25, padding: 20, borderRadius: 12, background: "#f8f9ff", border: "1px solid #dadaff", whiteSpace: "pre-wrap" }}>
+          <h3 style={{ fontWeight: 700, marginBottom: 12 }}>🧠 AI Day Planner</h3>
+          <div style={{ fontSize: "0.95em", color: "#2d3748" }}>{plannerText}</div>
+          <button onClick={() => setShowPlanner(false)} style={{ marginTop: 15, background: "#4a5568", color: "white", padding: "8px 16px", borderRadius: 6, border: "none", cursor: "pointer" }}>
             Hide Plan
           </button>
         </div>
