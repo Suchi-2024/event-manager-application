@@ -16,6 +16,17 @@ function AppInner() {
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
 
+  // ✅ NEW: Listen for date switch requests
+  useEffect(() => {
+    const handleDateSwitch = (e) => {
+      setSelectedDate(e.detail);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    
+    window.addEventListener('switchDate', handleDateSwitch);
+    return () => window.removeEventListener('switchDate', handleDateSwitch);
+  }, []);
+
   // Calculate score and streak
   useEffect(() => {
     if (!user) return;
