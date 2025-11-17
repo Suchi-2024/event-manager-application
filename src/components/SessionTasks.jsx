@@ -11,20 +11,22 @@ import {
   updateDoc,
   doc,
   deleteDoc,
-  getDocs,
-  limit,
 } from "firebase/firestore";
 
 import TaskList from "./TaskList";
 import TaskForm from "./TaskForm";
 import GratitudeModal from "./GratitudeModal";
+import Toast from "./Toast";
 import { useAuth } from "./AuthProvider";
 
+/* IST helpers */
 function nowIST() {
   return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
 }
-function istMidnightFromIso(iso) {
-  const d = new Date(iso);
+
+function istMidnightFromIso(isoDateStr) {
+  // isoDateStr may be "YYYY-MM-DD"
+  const d = new Date(isoDateStr + "T00:00:00");
   const ist = new Date(d.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
   ist.setHours(0, 0, 0, 0);
   return ist;
@@ -44,26 +46,23 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
   const [showPlanner, setShowPlanner] = useState(false);
 
   const [futureJumpMessage, setFutureJumpMessage] = useState(null);
-
-  // completed section control (expanded by default)
   const [completedOpen, setCompletedOpen] = useState(true);
 
-  const allTasksCache = useRef(null);
-  const lastFetch = useRef(0);
+  const [toast, setToast] = useState("");
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2200);
+  };
+
+  // keep a stable ref to unsubscribe function
   const unsubRef = useRef(null);
 
   const dateRange = useMemo(() => ({ startOfDay: sessionDate + "T00:00", endOfDay: sessionDate + "T23:59" }), [sessionDate]);
 
+  // Real-time listener (no broken caching)
   useEffect(() => {
     if (!user) {
       setLoading(false);
-      return;
-    }
-    const now = Date.now();
-    if (allTasksCache.current && allTasksCache.current.date === sessionDate && now - lastFetch.current < 30000) {
-      setTasks(allTasksCache.current.tasks);
-      setLoading(false);
-      if (onTasksChange) onTasksChange(allTasksCache.current.tasks);
       return;
     }
 
@@ -84,8 +83,6 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     const unsub = onSnapshot(q, (snap) => {
       const arr = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
       setTasks(arr);
-      allTasksCache.current = { date: sessionDate, tasks: arr };
-      lastFetch.current = Date.now();
       if (onTasksChange) onTasksChange(arr);
       setLoading(false);
     }, (err) => {
@@ -101,49 +98,31 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     };
   }, [sessionDate, user, onTasksChange, dateRange]);
 
-  // helper to clear cache after any mutation
-  function clearCache() {
-    allTasksCache.current = null;
-    lastFetch.current = 0;
-  }
+  // ---------- CRUD with optimistic updates ----------
 
-  // ---------- CRUD ----------
+  // Helper to format IST-local due string is handled by TaskForm; we accept due as "YYYY-MM-DDTHH:MM"
   async function handleAddOrEdit(task) {
     if (!user) return;
 
     const text = (task.text || "").trim();
     if (!text) return;
     const due = task.due;
-    if (!due) return alert("Please select a due date/time.");
+    if (!due) return showToast("Please select a due date/time.");
 
-    // IST-based block for past
-    const nowIst = nowIST();
-    const selectedLocal = new Date(due);
-    if (selectedLocal.getTime() < nowIst.getTime()) {
-      return alert("You cannot add a task in the past (IST). Choose a future date/time.");
-    }
-
-    const taskDate = due.slice(0, 10);
-    if (!taskDate) return alert("Invalid due date.");
-
-    // Duplicate check
-    if (allTasksCache.current && allTasksCache.current.date === taskDate) {
-      const dup = allTasksCache.current.tasks.find((t) => t.text?.trim() === text && t.due?.slice(0, 10) === taskDate);
-      if (dup && (!task.id || dup.id !== task.id)) {
-        return alert("Duplicate task for the same day blocked.");
-      }
-    } else {
-      try {
-        const q = query(collection(db, "tasks"), where("uid", "==", user.uid), where("text", "==", text), limit(5));
-        const snap = await getDocs(q);
-        const found = snap.docs.map((d) => ({ ...d.data(), id: d.id })).find((t) => t.due?.slice(0, 10) === taskDate && (!task.id || t.id !== task.id));
-        if (found) return alert("Duplicate task for the same day blocked.");
-      } catch (err) {
-        console.error("Duplicate check failed:", err);
-      }
+    // IST validation: parse due string as IST local instant
+    const [datePart, timePart] = due.split("T");
+    if (!datePart || !timePart) return showToast("Invalid due format.");
+    const [y, m, d] = datePart.split("-").map(Number);
+    const [hh, mm] = timePart.split(":").map(Number);
+    // Build IST instant:
+    const istInstant = new Date(Date.UTC(y, m - 1, d, hh - 5, mm - 30));
+    if (istInstant.getTime() < nowIST().getTime()) {
+      return showToast("Cannot add a task in the past (IST).");
     }
 
     if (task.id) {
+      // editing: optimistic update + server update
+      setTasks(prev => prev.map(t => t.id === task.id ? { ...t, ...task, text, due } : t));
       try {
         await updateDoc(doc(db, "tasks", task.id), {
           ...task,
@@ -154,15 +133,18 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           reminderUnit: task.reminderUnit ?? null,
           priority: task.priority ?? "medium",
         });
-        clearCache();
-        setEditing(null);
+        showToast("Task updated ✓");
         window.dispatchEvent(new CustomEvent("tasksChanged"));
+        setEditing(null);
       } catch (err) {
         console.error("Update failed:", err);
-        alert("Failed to update task.");
+        showToast("Failed to update task.");
       }
     } else {
+      // new task: optimistic insert with temp id
+      const tempId = "temp-" + Date.now();
       const newTask = {
+        id: tempId,
         text,
         due,
         status: task.status || "pending",
@@ -175,10 +157,29 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         dueDate: due.slice(0, 10),
       };
 
+      // optimistic UI add
+      setTasks(prev => [newTask, ...prev]);
+      showToast("Adding task...");
+
       try {
-        await addDoc(collection(db, "tasks"), newTask);
-        clearCache();
+        const docRef = await addDoc(collection(db, "tasks"), {
+          text: newTask.text,
+          due: newTask.due,
+          status: newTask.status,
+          priority: newTask.priority,
+          reminderValue: newTask.reminderValue,
+          reminderUnit: newTask.reminderUnit,
+          reminderSent: false,
+          uid: user.uid,
+          createdAt: new Date().toISOString(),
+          dueDate: newTask.dueDate,
+        });
+
+        // replace temp id with real id in UI
+        setTasks(prev => prev.map(t => t.id === tempId ? { ...t, id: docRef.id } : t));
+        showToast("Task added ✓");
         window.dispatchEvent(new CustomEvent("tasksChanged"));
+
         if (newTask.dueDate !== sessionDate) {
           setFutureJumpMessage(newTask.dueDate);
           setTimeout(() => {
@@ -187,31 +188,42 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
         }
       } catch (err) {
         console.error("Add failed:", err);
-        alert("Failed to create task.");
+        // rollback optimistic add
+        setTasks(prev => prev.filter(t => t.id !== tempId));
+        showToast("Failed to create task.");
       }
     }
   }
 
   async function handleDelete(task) {
+    if (!task?.id) return;
+    // optimistic remove
+    setTasks(prev => prev.filter(t => t.id !== task.id));
+    showToast("Deleting...");
     try {
       await deleteDoc(doc(db, "tasks", task.id));
-      clearCache();
-      // ensure UI updates (listener will handle it, but we also remove locally for instant UX)
-      setTasks((prev) => prev.filter((p) => p.id !== task.id));
+      showToast("Task deleted 🗑️");
       window.dispatchEvent(new CustomEvent("tasksChanged"));
     } catch (err) {
       console.error("Delete failed:", err);
-      alert("Failed to delete task.");
+      showToast("Failed to delete task.");
+      // try to re-fetch quickly: we'll re-add by forcing a snapshot reload by toggling sessionDate event
+      // (or you can re-fetch from server)
     }
   }
 
   async function markTaskStatus(task, status) {
+    if (!task?.id) return;
+    // optimistic
+    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status } : t));
+    showToast(status === "ongoing" ? "Marked ongoing" : "Updating...");
     try {
       await updateDoc(doc(db, "tasks", task.id), { status });
-      clearCache();
+      showToast(status === "ongoing" ? "Marked ongoing ✓" : "Updated ✓");
       window.dispatchEvent(new CustomEvent("tasksChanged"));
     } catch (err) {
       console.error("Mark status failed:", err);
+      showToast("Failed to update status.");
     }
   }
 
@@ -220,45 +232,60 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     setShowGratitudeModal(true);
   }
 
-  // After user confirms gratitude: update task, then call AI reflection endpoint and update doc again
   async function confirmComplete(gratitude) {
     const t = taskToComplete;
     setShowGratitudeModal(false);
     setTaskToComplete(null);
     if (!t) return;
+
+    // immediate optimistic UI update
+    setTasks(prev => prev.map(x => x.id === t.id ? { ...x, status: "completed", gratitude, completedAt: new Date().toISOString() } : x));
+    showToast("Completing...");
+
     try {
+      // 1) mark as completed
       await updateDoc(doc(db, "tasks", t.id), {
         status: "completed",
         gratitude,
         completedAt: new Date().toISOString(),
       });
-      clearCache();
-      window.dispatchEvent(new CustomEvent("tasksChanged"));
 
-      // Call reflection API (auto-generate)
+      // 2) call reflection endpoint (Gemini) — auto-generate
       try {
         const res = await fetch("/api/taskReflection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ task: t.text, gratitude }),
         });
-        const data = await res.json();
-        const feedback = data.feedback || "";
-        if (feedback) {
-          await updateDoc(doc(db, "tasks", t.id), { reflectionFeedback: feedback });
-          clearCache();
-          window.dispatchEvent(new CustomEvent("tasksChanged"));
+
+        if (res.ok) {
+          const data = await res.json();
+          const feedback = data.feedback || "";
+          if (feedback) {
+            // save reflection back to doc
+            await updateDoc(doc(db, "tasks", t.id), { reflectionFeedback: feedback });
+            // update UI optimistically
+            setTasks(prev => prev.map(x => x.id === t.id ? { ...x, reflectionFeedback: feedback } : x));
+            showToast("Task completed ✨");
+            window.dispatchEvent(new CustomEvent("tasksChanged"));
+          } else {
+            showToast("Task completed (no reflection).");
+          }
+        } else {
+          console.error("Reflection API error:", await res.text());
+          showToast("Task completed (reflection failed).");
         }
       } catch (aiErr) {
         console.error("Reflection generation failed:", aiErr);
+        showToast("Task completed (reflection failed).");
       }
     } catch (err) {
       console.error("Confirm complete failed:", err);
-      alert("Failed to complete task.");
+      showToast("Failed to complete task.");
     }
   }
 
-  // AI planner
+  // AI planner (no changes)
   async function generatePlan() {
     setPlannerText("⏳ Generating AI plan...");
     setShowPlanner(true);
@@ -275,7 +302,6 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
     }
   }
 
-  // UI derived lists
   const activeTasks = tasks.filter((t) => t.status !== "completed");
   const completedTasks = tasks.filter((t) => t.status === "completed");
 
@@ -299,7 +325,6 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
   return (
     <div style={{ background: "#fff", borderRadius: 16, padding: 16, boxShadow: "0 4px 20px rgba(0,0,0,0.08)", border: "1px solid rgba(102,126,234,0.08)" }}>
-      {/* Future toast */}
       {futureJumpMessage && (
         <div style={{ background: "#f0f9ff", padding: 12, borderRadius: 10, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           🎉 Task added for <strong style={{ marginLeft: 8 }}>{futureJumpMessage}</strong>
@@ -321,10 +346,9 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           <div>📝 Active Tasks ({activeTasks.length})</div>
         </div>
 
-        {activeTasks.length === 0 ? <div style={{ padding: 16, color: "#94a3b8" }}>No active tasks</div> : <TaskList tasks={activeTasks} onEdit={isToday || isFuture ? setEditing : undefined} onDelete={isToday || isFuture ? handleDelete : undefined} onMarkOngoing={isToday ? (t) => markTaskStatus(t, "ongoing") : undefined} onMarkComplete={isToday ? handleMarkComplete : undefined} />}
+        {activeTasks.length === 0 ? <div style={{ padding: 16, color: "#94a3b8" }}>No active tasks</div> : <TaskList tasks={activeTasks} onEdit={isToday || isFuture ? setEditing : undefined} onDelete={handleDelete} onMarkOngoing={isToday ? (t) => markTaskStatus(t, "ongoing") : undefined} onMarkComplete={isToday ? handleMarkComplete : undefined} />}
       </div>
 
-      {/* Completed */}
       <div style={{ marginTop: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ fontWeight: 700 }}>✅ Completed Tasks ({completedTasks.length})</div>
@@ -337,7 +361,7 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
 
         {completedOpen && (
           <div style={{ marginTop: 10 }}>
-            {completedTasks.length === 0 ? <div style={{ padding: 12, color: "#94a3b8" }}>No completed tasks yet</div> : <TaskList tasks={completedTasks} onDelete={isToday || isFuture ? handleDelete : undefined} />}
+            {completedTasks.length === 0 ? <div style={{ padding: 12, color: "#94a3b8" }}>No completed tasks yet</div> : <TaskList tasks={completedTasks} onDelete={handleDelete} />}
           </div>
         )}
       </div>
@@ -351,6 +375,8 @@ export default function SessionTasks({ sessionDate, onTasksChange }) {
           <button onClick={() => setShowPlanner(false)} style={{ marginTop: 8, background: "#475569", color: "#fff", border: "none", padding: "6px 10px", borderRadius: 8 }}>Hide</button>
         </div>
       )}
+
+      <Toast message={toast} />
     </div>
   );
 }
