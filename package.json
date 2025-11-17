@@ -16,6 +16,9 @@
     "react-scripts": "5.0.1",
     "firebase": "12.6.0"
   },
+  "engines": {
+  "node": "18.x"
+  },
   "devDependencies": {
     "@types/react": "18.2.38",
     "@types/react-dom": "18.2.15",
